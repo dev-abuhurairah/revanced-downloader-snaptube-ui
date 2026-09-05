@@ -1,0 +1,9 @@
+<resources>
+    <color name="snaptube_yellow">#FFCC00</color>
+    <color name="snaptube_yellow_dark">#E5B800</color>
+    <color name="snaptube_bg_black">#0D0D0E</color>
+    <color name="snaptube_surface">#1C1C1E</color>
+    <color name="snaptube_search_border">#2C2C2E</color>
+    <color name="snaptube_text_primary">#FFFFFF</color>
+    <color name="snaptube_text_secondary">#8E8E93</color>
+</resources>

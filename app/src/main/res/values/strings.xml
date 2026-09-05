@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Snaptube</string>
+    <string name="search_hint">Search to download</string>
+    <string name="tab_search">Search</string>
+    <string name="tab_youtube">YouTube</string>
+    <string name="tab_music">Music</string>
+    <string name="tab_more">More</string>
+    <string name="nav_download">Download</string>
+    <string name="nav_play">Play</string>
+    <string name="nav_settings">Settings</string>
+</resources>
