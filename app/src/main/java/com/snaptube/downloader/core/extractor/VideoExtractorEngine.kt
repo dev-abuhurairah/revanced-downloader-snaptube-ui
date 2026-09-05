@@ -41,19 +41,31 @@ object VideoExtractorEngine {
         }
     }
 
+    fun extractUrlFromText(text: String): String {
+        val trimmed = text.trim()
+        val pattern = Pattern.compile("(https?://[a-zA-Z0-9.-]+(?:/[^\\s]*)?)", Pattern.CASE_INSENSITIVE)
+        val matcher = pattern.matcher(trimmed)
+        return if (matcher.find()) {
+            matcher.group(1)?.trim() ?: trimmed
+        } else {
+            trimmed
+        }
+    }
+
     suspend fun resolveMedia(
         inputQueryOrUrl: String,
         directStreamUrl: String? = null
     ): Result<MediaInfo> = withContext(Dispatchers.IO) {
         try {
-            val query = inputQueryOrUrl.trim()
-            val isUrl = query.startsWith("http://") || query.startsWith("https://")
+            val extracted = extractUrlFromText(inputQueryOrUrl)
+            val isUrl = extracted.startsWith("http://", ignoreCase = true) || extracted.startsWith("https://", ignoreCase = true)
 
             if (!isUrl) {
                 // Return search result package
-                return@withContext Result.success(createSearchResultMedia(query))
+                return@withContext Result.success(createSearchResultMedia(inputQueryOrUrl.trim()))
             }
 
+            val query = extracted
             val platform = detectPlatform(query)
 
             // If the browser intercepted a live video stream, use it directly!
@@ -89,9 +101,10 @@ object VideoExtractorEngine {
 
             // 4. Graceful fallback
             Result.success(createPlatformFallback(query, platform))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
-            Result.success(createPlatformFallback(inputQueryOrUrl, detectPlatform(inputQueryOrUrl)))
+            val fallbackUrl = extractUrlFromText(inputQueryOrUrl)
+            Result.success(createPlatformFallback(fallbackUrl, detectPlatform(fallbackUrl)))
         }
     }
 
@@ -118,7 +131,7 @@ object VideoExtractorEngine {
                     val videoStreams = json.optJSONArray("videoStreams")
                     if (videoStreams != null) {
                         for (i in 0 until videoStreams.length()) {
-                            val stream = videoStreams.getJSONObject(i)
+                            val stream = videoStreams.optJSONObject(i) ?: continue
                             val quality = stream.optString("quality", "720p")
                             val streamUrl = stream.optString("url")
                             val formatUpper = stream.optString("format", "").uppercase()
@@ -145,7 +158,7 @@ object VideoExtractorEngine {
                     val audioStreams = json.optJSONArray("audioStreams")
                     if (audioStreams != null) {
                         for (i in 0 until audioStreams.length()) {
-                            val stream = audioStreams.getJSONObject(i)
+                            val stream = audioStreams.optJSONObject(i) ?: continue
                             val quality = stream.optString("quality", "128 kbps")
                             val streamUrl = stream.optString("url")
                             if (streamUrl.isNotEmpty()) {
@@ -176,7 +189,7 @@ object VideoExtractorEngine {
                         )
                     }
                 }
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 // Try next Piped mirror
             }
         }
@@ -197,7 +210,7 @@ object VideoExtractorEngine {
                 val json = JSONObject(body)
                 val code = json.optInt("code", -1)
                 if (code == 0 && json.has("data")) {
-                    val data = json.getJSONObject("data")
+                    val data = json.optJSONObject("data") ?: return null
                     val title = data.optString("title", "TikTok Video")
                     val authorObj = data.optJSONObject("author")
                     val authorName = authorObj?.optString("nickname") ?: "@tiktok_creator"
@@ -365,17 +378,18 @@ object VideoExtractorEngine {
     }
 
     private fun createSearchResultMedia(searchQuery: String): MediaInfo {
+        val safeEncoded = runCatching { java.net.URLEncoder.encode(searchQuery, "UTF-8") }.getOrDefault("video")
         return MediaInfo(
-            sourceUrl = "https://www.youtube.com/results?search_query=$searchQuery",
-            title = "Search: $searchQuery",
-            author = "Top Result",
-            duration = "03:30",
+            sourceUrl = "https://www.youtube.com/results?search_query=$safeEncoded",
+            title = "Search: ${searchQuery.take(40)}",
+            author = "YouTube Search",
+            duration = "Stream",
             thumbnailUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
             platform = PlatformType.YOUTUBE,
             formats = listOf(
-                MediaFormat("v_1080", "1080p FHD", "mp4", "High Quality", MediaType.VIDEO, null),
-                MediaFormat("v_720", "720p HD", "mp4", "Standard", MediaType.VIDEO, null),
-                MediaFormat("a_mp3", "MP3 Audio (320k)", "mp3", "Audio", MediaType.AUDIO, null)
+                MediaFormat("v_1080", "1080p FHD", "mp4", "Open Browser to Download", MediaType.VIDEO, null),
+                MediaFormat("v_720", "720p HD", "mp4", "Open Browser to Download", MediaType.VIDEO, null),
+                MediaFormat("a_mp3", "MP3 Audio (320k)", "mp3", "Open Browser to Download", MediaType.AUDIO, null)
             )
         )
     }

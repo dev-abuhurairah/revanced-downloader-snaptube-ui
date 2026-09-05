@@ -202,7 +202,8 @@ fun SnaptubeMainApp(
                             onOpenBrowser = { url ->
                                 browserTargetUrl = url
                                 currentTopTab = "More"
-                            }
+                            },
+                            initialSharedUrl = initialSharedUrl
                         )
                         "YouTube" -> BrowserScreen(
                             initialUrl = "https://m.youtube.com",

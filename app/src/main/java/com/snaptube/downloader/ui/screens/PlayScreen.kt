@@ -34,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,6 +103,28 @@ fun PlayScreen(
 
         // Video Player Box when an item is selected
         activePlayingItem?.let { item ->
+            LaunchedEffect(item.id, item.localFilePath) {
+                try {
+                    val path = item.localFilePath
+                    val mediaItem = if (path != null && File(path).exists()) {
+                        MediaItem.fromUri(Uri.fromFile(File(path)))
+                    } else if (item.sourceUrl.startsWith("http://", ignoreCase = true) || item.sourceUrl.startsWith("https://", ignoreCase = true)) {
+                        MediaItem.fromUri(Uri.parse(item.sourceUrl))
+                    } else {
+                        null
+                    }
+                    if (mediaItem != null) {
+                        exoPlayer.stop()
+                        exoPlayer.clearMediaItems()
+                        exoPlayer.setMediaItem(mediaItem)
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    }
+                } catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -116,17 +139,7 @@ fun PlayScreen(
                             useController = true
                         }
                     },
-                    update = {
-                        val path = item.localFilePath
-                        val mediaItem = if (path != null && File(path).exists()) {
-                            MediaItem.fromUri(Uri.fromFile(File(path)))
-                        } else {
-                            MediaItem.fromUri(Uri.parse(item.sourceUrl))
-                        }
-                        exoPlayer.setMediaItem(mediaItem)
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = true
-                    }
+                    update = { /* Handled safely by LaunchedEffect */ }
                 )
 
                 IconButton(

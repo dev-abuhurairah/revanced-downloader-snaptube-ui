@@ -111,7 +111,8 @@ object DownloadHelper {
         try {
             val prefs = ctx.getSharedPreferences("vidsnap_downloads_prefs", Context.MODE_PRIVATE)
             val jsonArray = org.json.JSONArray()
-            _downloadList.value.forEach { item ->
+            val snapshot = _downloadList.value.toList()
+            snapshot.forEach { item ->
                 val obj = org.json.JSONObject().apply {
                     put("id", item.id)
                     put("title", item.title)
@@ -137,8 +138,23 @@ object DownloadHelper {
                 jsonArray.put(obj)
             }
             prefs.edit().putString("saved_downloads", jsonArray.toString()).apply()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
+        }
+    }
+
+    private fun sanitizeForFilename(input: String): String {
+        return input.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            .replace(Regex("_+"), "_")
+            .trim('_')
+    }
+
+    private fun sanitizeHeaderValue(value: String): String? {
+        val clean = value.filter { it.code in 32..126 }.trim()
+        return if (clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true)) {
+            clean
+        } else {
+            null
         }
     }
 
@@ -146,13 +162,18 @@ object DownloadHelper {
         init(context)
         val downloadId = System.currentTimeMillis()
 
-        val sanitizedTitle = mediaInfo.title
-            .replace(Regex("[^a-zA-Z0-9.\\-_ ]"), "_")
-            .trim()
-            .take(50)
-            .ifEmpty { "VidSnap_Media" }
+        val sanitizedTitle = sanitizeForFilename(mediaInfo.title)
+            .take(45)
+            .ifEmpty { "VidSnap_Video" }
 
-        val fileName = "${sanitizedTitle}_${format.resolutionOrQuality.replace(" ", "_")}.${format.fileExtension}"
+        val sanitizedQuality = sanitizeForFilename(format.resolutionOrQuality)
+            .take(20)
+            .ifEmpty { "HD" }
+
+        val sanitizedExt = sanitizeForFilename(format.fileExtension)
+            .ifEmpty { "mp4" }
+
+        val fileName = "${sanitizedTitle}_${sanitizedQuality}.${sanitizedExt}"
 
         // Initial task entry
         val initialItem = DownloadItem(
@@ -171,32 +192,37 @@ object DownloadHelper {
         showToast(context, "Starting download: $fileName")
 
         coroutineScope.launch {
-            // Step 1: Ensure we have a valid, direct video stream URL
-            var directUrl = format.directUrl
-            if (directUrl.isNullOrEmpty() || directUrl == mediaInfo.sourceUrl) {
-                // Resolve stream on demand
-                val resolved = VideoExtractorEngine.resolveMedia(mediaInfo.sourceUrl)
-                resolved.onSuccess { info ->
-                    val matching = info.formats.firstOrNull { it.formatId == format.formatId }
-                        ?: info.formats.firstOrNull { it.directUrl != null }
-                    if (matching?.directUrl != null) {
-                        directUrl = matching.directUrl
+            try {
+                // Step 1: Ensure we have a valid, direct video stream URL
+                var directUrl = format.directUrl
+                if (directUrl.isNullOrEmpty() || directUrl == mediaInfo.sourceUrl) {
+                    // Resolve stream on demand
+                    val resolved = VideoExtractorEngine.resolveMedia(mediaInfo.sourceUrl)
+                    resolved.onSuccess { info ->
+                        val matching = info.formats.firstOrNull { it.formatId == format.formatId }
+                            ?: info.formats.firstOrNull { it.directUrl != null }
+                        if (matching?.directUrl != null) {
+                            directUrl = matching.directUrl
+                        }
                     }
                 }
-            }
 
-            val finalStreamUrl = directUrl
+                val finalStreamUrl = directUrl
 
-            if (finalStreamUrl.isNullOrEmpty()) {
-                // If stream resolution is not direct, attempt system download manager
-                launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
-                return@launch
-            }
+                if (finalStreamUrl.isNullOrEmpty() || (!finalStreamUrl.startsWith("http://", true) && !finalStreamUrl.startsWith("https://", true))) {
+                    // If stream resolution is not direct, attempt system download manager
+                    launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
+                    return@launch
+                }
 
-            // Step 2: Download directly using OkHttp streaming for 100% reliability
-            val success = downloadWithOkHttp(context, downloadId, finalStreamUrl, mediaInfo, fileName)
-            if (!success) {
-                // Fallback to system DownloadManager
+                // Step 2: Download directly using OkHttp streaming for 100% reliability
+                val success = downloadWithOkHttp(context, downloadId, finalStreamUrl, mediaInfo, fileName)
+                if (!success) {
+                    // Fallback to system DownloadManager
+                    launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
+                }
+            } catch (t: Throwable) {
+                t.printStackTrace()
                 launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
             }
         }
@@ -217,12 +243,14 @@ object DownloadHelper {
 
             val targetFile = File(downloadDir, fileName)
 
-            val request = Request.Builder()
-                .url(streamUrl)
-                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                .addHeader("Referer", mediaInfo.sourceUrl)
-                .addHeader("Accept", "*/*")
-                .build()
+            val reqBuilder = Request.Builder().url(streamUrl)
+            reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+            val cleanReferer = sanitizeHeaderValue(mediaInfo.sourceUrl)
+            if (cleanReferer != null) {
+                reqBuilder.addHeader("Referer", cleanReferer)
+            }
+            reqBuilder.addHeader("Accept", "*/*")
+            val request = reqBuilder.build()
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
@@ -316,28 +344,36 @@ object DownloadHelper {
     ) {
         try {
             val downloadUrl = format.directUrl ?: mediaInfo.sourceUrl
+            if (!downloadUrl.startsWith("http://", ignoreCase = true) && !downloadUrl.startsWith("https://", ignoreCase = true)) {
+                throw IllegalArgumentException("Invalid download URL: $downloadUrl")
+            }
+
             val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
-                setTitle(mediaInfo.title)
-                setDescription("Downloading with VidSnap (${format.resolutionOrQuality})")
+                setTitle(mediaInfo.title.take(60))
+                setDescription("Downloading with VidSnap (${format.resolutionOrQuality.take(30)})")
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 addRequestHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
-                addRequestHeader("Referer", mediaInfo.sourceUrl)
+                val cleanReferer = sanitizeHeaderValue(mediaInfo.sourceUrl)
+                if (cleanReferer != null) {
+                    addRequestHeader("Referer", cleanReferer)
+                }
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
                 try {
                     setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                } catch (_: Exception) {}
+                } catch (_: Throwable) {}
             }
 
             val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
-            manager?.enqueue(request)
+                ?: throw IllegalStateException("DownloadManager service not available")
+            manager.enqueue(request)
 
             _downloadList.value = _downloadList.value.map {
                 if (it.id == downloadId) {
                     it.copy(progress = 50, status = DownloadStatus.DOWNLOADING)
                 } else it
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
             _downloadList.value = _downloadList.value.map {
                 if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
@@ -353,7 +389,7 @@ object DownloadHelper {
             if (!publicDir.exists()) publicDir.mkdirs()
             val destFile = File(publicDir, fileName)
             sourceFile.copyTo(destFile, overwrite = true)
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             // Silently fall back to app external files dir
         }
     }
@@ -377,8 +413,11 @@ object DownloadHelper {
     }
 
     private fun showToast(context: Context, message: String) {
+        val targetCtx = appContext ?: context.applicationContext
         Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            try {
+                Toast.makeText(targetCtx, message, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {}
         }
     }
 }
