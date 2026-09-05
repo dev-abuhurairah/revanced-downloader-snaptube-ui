@@ -3,8 +3,10 @@ package com.snaptube.downloader.ui.screens
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -60,6 +62,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun BrowserScreen(
     initialUrl: String,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -72,6 +75,15 @@ fun BrowserScreen(
     var isResolving by remember { mutableStateOf(false) }
     var resolvedMedia by remember { mutableStateOf<MediaInfo?>(null) }
     var detectedStreamUrl by remember { mutableStateOf<String?>(null) }
+
+    // Intercept system back button
+    BackHandler(enabled = true) {
+        if (webViewInstance?.canGoBack() == true) {
+            webViewInstance?.goBack()
+        } else {
+            onBack()
+        }
+    }
 
     fun downloadCurrentPage() {
         val target = webViewInstance?.url ?: currentUrl
@@ -103,7 +115,13 @@ fun BrowserScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
-                    onClick = { if (webViewInstance?.canGoBack() == true) webViewInstance?.goBack() },
+                    onClick = {
+                        if (webViewInstance?.canGoBack() == true) {
+                            webViewInstance?.goBack()
+                        } else {
+                            onBack()
+                        }
+                    },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = SnaptubeTextPrimary)
@@ -161,9 +179,20 @@ fun BrowserScreen(
                 modifier = Modifier.weight(1f),
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = false
+                            displayZoomControls = false
+                            mediaPlaybackRequiresUserGesture = false
+                            allowFileAccess = true
+                            userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                            cacheMode = WebSettings.LOAD_DEFAULT
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 currentUrl = url.orEmpty()

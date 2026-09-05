@@ -31,6 +31,7 @@ object DownloadHelper {
     private val _downloadList = MutableStateFlow<List<DownloadItem>>(emptyList())
     val downloadList: StateFlow<List<DownloadItem>> = _downloadList.asStateFlow()
 
+    private var appContext: Context? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO)
 
     private val httpClient = OkHttpClient.Builder()
@@ -39,7 +40,110 @@ object DownloadHelper {
         .followRedirects(true)
         .build()
 
+    fun init(context: Context) {
+        if (appContext != null) return
+        val app = context.applicationContext
+        appContext = app
+        loadFromPrefs(app)
+    }
+
+    private fun loadFromPrefs(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences("vidsnap_downloads_prefs", Context.MODE_PRIVATE)
+            val jsonString = prefs.getString("saved_downloads", null) ?: return
+            val jsonArray = org.json.JSONArray(jsonString)
+            val items = mutableListOf<DownloadItem>()
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val formatObj = obj.optJSONObject("format")
+                val mediaFormat = if (formatObj != null) {
+                    MediaFormat(
+                        formatId = formatObj.optString("formatId", "default"),
+                        resolutionOrQuality = formatObj.optString("resolutionOrQuality", "HD"),
+                        fileExtension = formatObj.optString("fileExtension", "mp4"),
+                        approxSize = formatObj.optString("approxSize").takeIf { it.isNotEmpty() },
+                        mediaType = runCatching {
+                            com.snaptube.downloader.data.model.MediaType.valueOf(formatObj.optString("mediaType", "VIDEO"))
+                        }.getOrDefault(com.snaptube.downloader.data.model.MediaType.VIDEO),
+                        directUrl = formatObj.optString("directUrl").takeIf { it.isNotEmpty() }
+                    )
+                } else {
+                    MediaFormat("default", "HD", "mp4")
+                }
+
+                val statusStr = obj.optString("status", DownloadStatus.COMPLETED.name)
+                var status = runCatching { DownloadStatus.valueOf(statusStr) }.getOrDefault(DownloadStatus.COMPLETED)
+                val localPath = obj.optString("localFilePath").takeIf { it.isNotEmpty() }
+
+                if (status == DownloadStatus.DOWNLOADING || status == DownloadStatus.PENDING) {
+                    if (localPath != null && File(localPath).exists() && File(localPath).length() > 50 * 1024) {
+                        status = DownloadStatus.COMPLETED
+                    } else {
+                        status = DownloadStatus.FAILED
+                    }
+                }
+
+                items.add(
+                    DownloadItem(
+                        id = obj.optLong("id", System.currentTimeMillis()),
+                        title = obj.optString("title", "Saved Video"),
+                        sourceUrl = obj.optString("sourceUrl", ""),
+                        thumbnailUrl = obj.optString("thumbnailUrl", ""),
+                        localFilePath = localPath,
+                        format = mediaFormat,
+                        progress = if (status == DownloadStatus.COMPLETED) 100 else obj.optInt("progress", 0),
+                        totalBytes = obj.optLong("totalBytes", 0L),
+                        downloadedBytes = obj.optLong("downloadedBytes", 0L),
+                        status = status,
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                    )
+                )
+            }
+            _downloadList.value = items
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun persistDownloads() {
+        val ctx = appContext ?: return
+        try {
+            val prefs = ctx.getSharedPreferences("vidsnap_downloads_prefs", Context.MODE_PRIVATE)
+            val jsonArray = org.json.JSONArray()
+            _downloadList.value.forEach { item ->
+                val obj = org.json.JSONObject().apply {
+                    put("id", item.id)
+                    put("title", item.title)
+                    put("sourceUrl", item.sourceUrl)
+                    put("thumbnailUrl", item.thumbnailUrl)
+                    put("localFilePath", item.localFilePath ?: "")
+                    put("progress", item.progress)
+                    put("totalBytes", item.totalBytes)
+                    put("downloadedBytes", item.downloadedBytes)
+                    put("status", item.status.name)
+                    put("timestamp", item.timestamp)
+
+                    val formatObj = org.json.JSONObject().apply {
+                        put("formatId", item.format.formatId)
+                        put("resolutionOrQuality", item.format.resolutionOrQuality)
+                        put("fileExtension", item.format.fileExtension)
+                        put("approxSize", item.format.approxSize ?: "")
+                        put("mediaType", item.format.mediaType.name)
+                        put("directUrl", item.format.directUrl ?: "")
+                    }
+                    put("format", formatObj)
+                }
+                jsonArray.put(obj)
+            }
+            prefs.edit().putString("saved_downloads", jsonArray.toString()).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun startDownload(context: Context, mediaInfo: MediaInfo, format: MediaFormat) {
+        init(context)
         val downloadId = System.currentTimeMillis()
 
         val sanitizedTitle = mediaInfo.title
@@ -63,6 +167,7 @@ object DownloadHelper {
         )
 
         _downloadList.value = listOf(initialItem) + _downloadList.value
+        persistDownloads()
         showToast(context, "Starting download: $fileName")
 
         coroutineScope.launch {
@@ -165,6 +270,7 @@ object DownloadHelper {
                 _downloadList.value = _downloadList.value.map {
                     if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
                 }
+                persistDownloads()
                 showToast(context, "Download failed: Incomplete or empty video stream.")
                 return@withContext false
             }
@@ -191,6 +297,7 @@ object DownloadHelper {
                     )
                 } else it
             }
+            persistDownloads()
 
             showToast(context, "Downloaded successfully: $fileName")
             true
@@ -235,6 +342,7 @@ object DownloadHelper {
             _downloadList.value = _downloadList.value.map {
                 if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
             }
+            persistDownloads()
             showToast(context, "Download failed: ${e.message}")
         }
     }
@@ -265,6 +373,7 @@ object DownloadHelper {
 
     fun removeDownload(id: Long) {
         _downloadList.value = _downloadList.value.filter { it.id != id }
+        persistDownloads()
     }
 
     private fun showToast(context: Context, message: String) {

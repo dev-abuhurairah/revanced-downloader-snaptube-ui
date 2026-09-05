@@ -151,6 +151,76 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsSectionTitle("DEVELOPER & CREDITS")
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = SnaptubeCard),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SnaptubeYellow.copy(alpha = 0.35f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(SnaptubeYellow),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "AH",
+                                    color = SnaptubeBlack,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 17.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "dev-abuhurairah",
+                                        color = SnaptubeTextPrimary,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(SnaptubeYellow.copy(alpha = 0.2f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "CREATOR",
+                                            color = SnaptubeYellow,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Lead Developer & Project Maintainer",
+                                    color = SnaptubeTextSecondary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "VidSnap is proudly built and maintained by dev-abuhurairah. High-speed, ad-free social media video downloading engine.",
+                            color = SnaptubeTextSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                }
+            }
+
+            item {
                 SettingsSectionTitle("ABOUT")
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -162,7 +232,7 @@ fun SettingsScreen(
                         SettingsRow(
                             icon = Icons.Default.Info,
                             title = "VidSnap Pro",
-                            subtitle = "Version 1.0.0 (Cloud Actions Build)"
+                            subtitle = "Version 1.0.0 (Built by dev-abuhurairah)"
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingsRow(
