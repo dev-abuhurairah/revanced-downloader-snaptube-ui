@@ -124,6 +124,12 @@ object DownloadHelper {
                 return@withContext false
             }
 
+            val contentType = response.header("Content-Type")?.lowercase().orEmpty()
+            if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+                showToast(context, "Link returned a web page. Open in-app browser to capture real video!")
+                return@withContext false
+            }
+
             val body = response.body ?: return@withContext false
             val contentLength = body.contentLength()
 
@@ -151,6 +157,16 @@ object DownloadHelper {
                     }
                     out.flush()
                 }
+            }
+
+            // A valid video is never less than 50 KB
+            if (totalRead < 50 * 1024) {
+                targetFile.delete()
+                _downloadList.value = _downloadList.value.map {
+                    if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
+                }
+                showToast(context, "Download failed: Incomplete or empty video stream.")
+                return@withContext false
             }
 
             // Successfully downloaded! Copy to public Downloads if possible

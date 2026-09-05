@@ -65,6 +65,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     selectedTopTab: String,
     onTopTabSelected: (String) -> Unit,
+    onOpenBrowser: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -220,7 +221,12 @@ fun HomeScreen(
             DownloadBottomSheet(
                 mediaInfo = media,
                 onFormatSelected = { format ->
-                    DownloadHelper.startDownload(context, media, format)
+                    if (format.directUrl != null) {
+                        DownloadHelper.startDownload(context, media, format)
+                    } else {
+                        Toast.makeText(context, "Opening in in-app browser to capture video stream...", Toast.LENGTH_SHORT).show()
+                        onOpenBrowser(media.sourceUrl)
+                    }
                     resolvedMedia = null
                 },
                 onDismiss = { resolvedMedia = null }

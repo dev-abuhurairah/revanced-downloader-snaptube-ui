@@ -121,10 +121,12 @@ object VideoExtractorEngine {
                             val stream = videoStreams.getJSONObject(i)
                             val quality = stream.optString("quality", "720p")
                             val streamUrl = stream.optString("url")
-                            val format = stream.optString("format", "mp4").lowercase()
-                            val mimeType = stream.optString("mimeType", "")
+                            val formatUpper = stream.optString("format", "").uppercase()
+                            val mimeType = stream.optString("mimeType", "").lowercase()
+                            val isMpeg = formatUpper.contains("MPEG_4") || formatUpper.contains("MP4") || mimeType.contains("video/mp4")
+                            val isAuthBlocked = streamUrl.contains("odycdn.com")
 
-                            if (streamUrl.isNotEmpty() && (format == "mp4" || mimeType.contains("video/mp4"))) {
+                            if (streamUrl.isNotEmpty() && isMpeg && !isAuthBlocked) {
                                 formatsList.add(
                                     MediaFormat(
                                         formatId = "yt_v_$i",
@@ -313,10 +315,10 @@ object VideoExtractorEngine {
         }
 
         val formats = listOf(
-            MediaFormat("v_1080", "1080p FHD", "mp4", "~42 MB", MediaType.VIDEO, url),
-            MediaFormat("v_720", "720p HD", "mp4", "~24 MB", MediaType.VIDEO, url),
-            MediaFormat("v_480", "480p SD", "mp4", "~14 MB", MediaType.VIDEO, url),
-            MediaFormat("a_mp3_320", "MP3 Audio (320 kbps)", "mp3", "~7.2 MB", MediaType.AUDIO, url)
+            MediaFormat("v_1080", "1080p FHD", "mp4", "Open Browser to Download", MediaType.VIDEO, null),
+            MediaFormat("v_720", "720p HD", "mp4", "Open Browser to Download", MediaType.VIDEO, null),
+            MediaFormat("v_480", "480p SD", "mp4", "Open Browser to Download", MediaType.VIDEO, null),
+            MediaFormat("a_mp3_320", "MP3 Audio", "mp3", "Open Browser to Download", MediaType.AUDIO, null)
         )
 
         return MediaInfo(

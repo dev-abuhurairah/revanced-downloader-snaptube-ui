@@ -87,6 +87,7 @@ fun SnaptubeMainApp(
 ) {
     var currentBottomTab by remember { mutableStateOf(BottomTab.DOWNLOAD) }
     var currentTopTab by remember { mutableStateOf("Search") }
+    var browserTargetUrl by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         modifier = Modifier
@@ -198,7 +199,11 @@ fun SnaptubeMainApp(
                     when (currentTopTab) {
                         "Search" -> HomeScreen(
                             selectedTopTab = currentTopTab,
-                            onTopTabSelected = { currentTopTab = it }
+                            onTopTabSelected = { currentTopTab = it },
+                            onOpenBrowser = { url ->
+                                browserTargetUrl = url
+                                currentTopTab = "More"
+                            }
                         )
                         "YouTube" -> BrowserScreen(
                             initialUrl = "https://m.youtube.com"
@@ -207,7 +212,7 @@ fun SnaptubeMainApp(
                             initialUrl = "https://music.youtube.com"
                         )
                         "More" -> BrowserScreen(
-                            initialUrl = "https://www.google.com"
+                            initialUrl = browserTargetUrl ?: "https://www.instagram.com"
                         )
                     }
                 }

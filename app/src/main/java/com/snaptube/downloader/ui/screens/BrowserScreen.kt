@@ -191,11 +191,36 @@ fun BrowserScreen(
                         loadUrl(initialUrl)
                         webViewInstance = this
                     }
+                },
+                update = { webView ->
+                    if (webView.url != initialUrl && initialUrl.isNotEmpty()) {
+                        webView.loadUrl(initialUrl)
+                    }
                 }
             )
         }
 
-        // Floating Snaptube Yellow Download Button
+        // Floating Video Ready Indicator
+        if (detectedStreamUrl != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 85.dp, bottom = 32.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SnaptubeYellow)
+                    .clickable { downloadCurrentPage() }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "⚡ Video Ready to Download",
+                    color = SnaptubeBlack,
+                    fontSize = 12.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+            }
+        }
+
+        // Floating VidSnap Yellow Download Button
         FloatingActionButton(
             onClick = { downloadCurrentPage() },
             containerColor = SnaptubeYellow,
