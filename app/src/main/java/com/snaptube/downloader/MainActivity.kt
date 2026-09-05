@@ -14,10 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.PlayCircleOutline
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -137,7 +137,7 @@ fun SnaptubeMainApp(
                     onClick = { currentBottomTab = BottomTab.PLAY },
                     icon = {
                         Icon(
-                            imageVector = if (currentBottomTab == BottomTab.PLAY) Icons.Filled.PlayCircleOutline else Icons.Outlined.PlayCircleOutline,
+                            imageVector = if (currentBottomTab == BottomTab.PLAY) Icons.Filled.PlayCircle else Icons.Outlined.PlayCircle,
                             contentDescription = "Play",
                             modifier = Modifier.size(24.dp)
                         )

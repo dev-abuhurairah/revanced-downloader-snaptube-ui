@@ -273,9 +273,9 @@ private fun DownloadCard(
             if (item.status == DownloadStatus.DOWNLOADING) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
                     color = SnaptubeYellow,
-                    trackColor = SnaptubeBlack,
-                    modifier = Modifier.fillMaxWidth().height(3.dp)
+                    trackColor = SnaptubeBlack
                 )
             }
         }

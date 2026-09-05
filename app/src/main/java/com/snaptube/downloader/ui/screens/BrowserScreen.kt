@@ -6,7 +6,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,12 +70,16 @@ fun BrowserScreen(
     var loadProgress by remember { mutableFloatStateOf(0f) }
     var isResolving by remember { mutableStateOf(false) }
     var resolvedMedia by remember { mutableStateOf<MediaInfo?>(null) }
+    var detectedStreamUrl by remember { mutableStateOf<String?>(null) }
 
     fun downloadCurrentPage() {
         val target = webViewInstance?.url ?: currentUrl
         isResolving = true
         coroutineScope.launch {
-            val res = VideoExtractorEngine.resolveMedia(target)
+            val res = VideoExtractorEngine.resolveMedia(
+                inputQueryOrUrl = target,
+                directStreamUrl = detectedStreamUrl
+            )
             isResolving = false
             res.onSuccess { info ->
                 resolvedMedia = info
@@ -144,14 +146,16 @@ fun BrowserScreen(
 
             if (loadProgress in 0.01f..0.99f) {
                 LinearProgressIndicator(
-                    progress = { loadProgress },
+                    progress = loadProgress,
                     color = SnaptubeYellow,
                     trackColor = SnaptubeCard,
-                    modifier = Modifier.fillMaxWidth().height(2.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
                 )
             }
 
-            // WebView
+            // WebView with Media Stream Sniffer
             AndroidView(
                 modifier = Modifier.weight(1f),
                 factory = { ctx ->
@@ -166,6 +170,14 @@ fun BrowserScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 currentUrl = url.orEmpty()
                                 pageTitle = view?.title.orEmpty()
+                            }
+                            override fun onLoadResource(view: WebView?, url: String?) {
+                                super.onLoadResource(view, url)
+                                val lower = url?.lowercase().orEmpty()
+                                if (lower.contains(".mp4") || lower.contains("videoplayback") ||
+                                    (lower.contains("video") && (lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")))) {
+                                    detectedStreamUrl = url
+                                }
                             }
                         }
                         webChromeClient = object : WebChromeClient() {
