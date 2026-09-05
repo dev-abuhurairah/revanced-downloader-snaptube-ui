@@ -29,6 +29,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +50,7 @@ import com.snaptube.downloader.ui.theme.SnaptubeSurface
 import com.snaptube.downloader.ui.theme.SnaptubeTextPrimary
 import com.snaptube.downloader.ui.theme.SnaptubeTextSecondary
 import com.snaptube.downloader.ui.theme.SnaptubeYellow
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,10 +59,29 @@ fun DownloadBottomSheet(
     onFormatSelected: (MediaFormat) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val coroutineScope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    fun handleDismiss() {
+        coroutineScope.launch {
+            try {
+                sheetState.hide()
+            } catch (_: Throwable) {}
+            onDismiss()
+        }
+    }
+
+    fun handleSelect(format: MediaFormat) {
+        coroutineScope.launch {
+            try {
+                sheetState.hide()
+            } catch (_: Throwable) {}
+            onFormatSelected(format)
+        }
+    }
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { handleDismiss() },
         sheetState = sheetState,
         containerColor = SnaptubeSurface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -129,7 +150,7 @@ fun DownloadBottomSheet(
                         SectionHeader(title = "VIDEO RESOLUTION", icon = Icons.Default.Videocam)
                     }
                     items(videoFormats) { format ->
-                        FormatItemCard(format = format, onClick = { onFormatSelected(format) })
+                        FormatItemCard(format = format, onClick = { handleSelect(format) })
                     }
                 }
 
@@ -139,7 +160,7 @@ fun DownloadBottomSheet(
                         SectionHeader(title = "AUDIO / MUSIC", icon = Icons.Default.Headphones)
                     }
                     items(audioFormats) { format ->
-                        FormatItemCard(format = format, onClick = { onFormatSelected(format) })
+                        FormatItemCard(format = format, onClick = { handleSelect(format) })
                     }
                 }
             }

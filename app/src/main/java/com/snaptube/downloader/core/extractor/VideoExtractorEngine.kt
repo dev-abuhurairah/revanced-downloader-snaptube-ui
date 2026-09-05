@@ -29,6 +29,14 @@ object VideoExtractorEngine {
         "https://pipedapi.tokhmi.xyz"
     )
 
+    // High-availability Cobalt API instances for universal extraction (Instagram, FB, TikTok, X, YT)
+    private val COBALT_INSTANCES = listOf(
+        "https://api.cobalt.tools",
+        "https://cobalt.api.scav.top",
+        "https://api.wuk.sh",
+        "https://cobalt-api.kwiatekm.tokyo"
+    )
+
     fun detectPlatform(url: String): PlatformType {
         val lower = url.lowercase()
         return when {
@@ -83,6 +91,11 @@ object VideoExtractorEngine {
                         return@withContext Result.success(pipedResult)
                     }
                 }
+                // Fallback to Cobalt for YouTube
+                val cobaltYt = tryCobaltExtraction(query, platform)
+                if (cobaltYt != null) {
+                    return@withContext Result.success(cobaltYt)
+                }
             }
 
             // 2. TikTok extractor via TikWM API
@@ -93,8 +106,8 @@ object VideoExtractorEngine {
                 }
             }
 
-            // 3. Instagram / Facebook / Social extractor
-            val socialResult = trySocialExtraction(query, platform)
+            // 3. Instagram / Facebook / Social extractor via Cobalt
+            val socialResult = tryCobaltExtraction(query, platform)
             if (socialResult != null) {
                 return@withContext Result.success(socialResult)
             }
@@ -277,9 +290,106 @@ object VideoExtractorEngine {
         return null
     }
 
-    private fun trySocialExtraction(url: String, platform: PlatformType): MediaInfo? {
-        // Direct resolver for public social reels & posts
+    private fun tryCobaltExtraction(url: String, platform: PlatformType): MediaInfo? {
+        val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+        for (instance in COBALT_INSTANCES) {
+            try {
+                val payload = JSONObject().apply {
+                    put("url", url)
+                    put("videoQuality", "1080")
+                    put("downloadMode", "auto")
+                }
+                val request = Request.Builder()
+                    .url("$instance/api/json")
+                    .post(payload.toString().toRequestBody(jsonMediaType))
+                    .addHeader("Accept", "application/json")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: return@use
+                    val json = JSONObject(body)
+                    val status = json.optString("status")
+
+                    var videoUrl: String? = null
+                    val title = json.optString("filename").takeIf { it.isNotEmpty() }
+
+                    if (status == "stream" || status == "tunnel" || status == "redirect") {
+                        videoUrl = json.optString("url")
+                    } else if (status == "picker") {
+                        val pickerArray = json.optJSONArray("picker")
+                        if (pickerArray != null && pickerArray.length() > 0) {
+                            for (p in 0 until pickerArray.length()) {
+                                val item = pickerArray.optJSONObject(p) ?: continue
+                                val itemUrl = item.optString("url")
+                                if (itemUrl.isNotEmpty() && videoUrl == null) {
+                                    videoUrl = itemUrl
+                                }
+                            }
+                        }
+                    }
+
+                    if (!videoUrl.isNullOrEmpty()) {
+                        val displayTitle = title?.replace(Regex("\\.(mp4|mp3|mkv|webm)$", RegexOption.IGNORE_CASE), "")
+                            ?: when (platform) {
+                                PlatformType.INSTAGRAM -> "Instagram Reel / Video"
+                                PlatformType.TIKTOK -> "TikTok Video"
+                                PlatformType.FACEBOOK -> "Facebook Video"
+                                PlatformType.TWITTER -> "X / Twitter Video"
+                                PlatformType.YOUTUBE -> "YouTube Video"
+                                else -> "${platform.displayName} Video"
+                            }
+
+                        val formats = mutableListOf(
+                            MediaFormat(
+                                formatId = "cobalt_1080",
+                                resolutionOrQuality = "1080p FHD / Best",
+                                fileExtension = "mp4",
+                                approxSize = "High Quality",
+                                mediaType = MediaType.VIDEO,
+                                directUrl = videoUrl
+                            ),
+                            MediaFormat(
+                                formatId = "cobalt_720",
+                                resolutionOrQuality = "720p HD",
+                                fileExtension = "mp4",
+                                approxSize = "Standard",
+                                mediaType = MediaType.VIDEO,
+                                directUrl = videoUrl
+                            ),
+                            MediaFormat(
+                                formatId = "cobalt_audio",
+                                resolutionOrQuality = "Audio MP3",
+                                fileExtension = "mp3",
+                                approxSize = "Audio",
+                                mediaType = MediaType.AUDIO,
+                                directUrl = videoUrl
+                            )
+                        )
+
+                        return MediaInfo(
+                            sourceUrl = url,
+                            title = displayTitle,
+                            author = "@${platform.displayName.lowercase()}_creator",
+                            duration = "HD",
+                            thumbnailUrl = getPlatformThumbnail(url, platform),
+                            platform = platform,
+                            formats = formats
+                        )
+                    }
+                }
+            } catch (_: Throwable) {
+                // Try next Cobalt mirror
+            }
+        }
         return null
+    }
+
+    private fun trySocialExtraction(url: String, platform: PlatformType): MediaInfo? {
+        return tryCobaltExtraction(url, platform)
     }
 
     private fun createDirectStreamMedia(

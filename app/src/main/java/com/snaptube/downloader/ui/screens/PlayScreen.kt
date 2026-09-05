@@ -106,8 +106,16 @@ fun PlayScreen(
             LaunchedEffect(item.id, item.localFilePath) {
                 try {
                     val path = item.localFilePath
-                    val mediaItem = if (path != null && File(path).exists()) {
-                        MediaItem.fromUri(Uri.fromFile(File(path)))
+                    val mediaItem = if (path != null) {
+                        if (path.startsWith("content://")) {
+                            MediaItem.fromUri(Uri.parse(path))
+                        } else if (File(path).exists()) {
+                            MediaItem.fromUri(Uri.fromFile(File(path)))
+                        } else if (item.sourceUrl.startsWith("http://", ignoreCase = true) || item.sourceUrl.startsWith("https://", ignoreCase = true)) {
+                            MediaItem.fromUri(Uri.parse(item.sourceUrl))
+                        } else {
+                            null
+                        }
                     } else if (item.sourceUrl.startsWith("http://", ignoreCase = true) || item.sourceUrl.startsWith("https://", ignoreCase = true)) {
                         MediaItem.fromUri(Uri.parse(item.sourceUrl))
                     } else {
