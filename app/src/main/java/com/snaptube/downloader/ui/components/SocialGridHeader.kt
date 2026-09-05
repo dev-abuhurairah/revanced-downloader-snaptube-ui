@@ -7,12 +7,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -44,17 +43,17 @@ fun SocialGridHeader(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(260.dp)
+            .height(280.dp)
             .clip(RoundedCornerShape(0.dp))
     ) {
-        // Tilted 3D Social Grid
+        // Tilted 3D Social Grid positioned safely below top navigation
         Column(
             modifier = Modifier
                 .graphicsLayer {
-                    rotationZ = -14f
-                    scaleX = 1.25f
-                    scaleY = 1.25f
-                    translationY = -60f
+                    rotationZ = -12f
+                    scaleX = 1.15f
+                    scaleY = 1.15f
+                    translationY = 20f
                 }
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -113,20 +112,21 @@ fun SocialGridHeader(
             }
         }
 
-        // Fading Gradient Overlay into deep black AMOLED background
+        // Two-way Fading Gradient Overlay: 100% black at top (protects nav buttons), soft glow in middle, pure black at bottom
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            SnaptubeBlack.copy(alpha = 0.25f),
+                            SnaptubeBlack,
+                            SnaptubeBlack.copy(alpha = 0.90f),
+                            SnaptubeBlack.copy(alpha = 0.40f),
+                            SnaptubeBlack.copy(alpha = 0.20f),
                             SnaptubeBlack.copy(alpha = 0.65f),
                             SnaptubeBlack.copy(alpha = 0.95f),
                             SnaptubeBlack
-                        ),
-                        startY = 0f,
-                        endY = 700f
+                        )
                     )
                 )
         )

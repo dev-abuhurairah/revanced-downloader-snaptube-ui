@@ -3,28 +3,19 @@ package com.snaptube.downloader.ui.screens
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -49,16 +39,10 @@ import com.snaptube.downloader.ui.components.DownloadBottomSheet
 import com.snaptube.downloader.ui.components.SearchDownloadBar
 import com.snaptube.downloader.ui.components.SocialGridHeader
 import com.snaptube.downloader.ui.components.TopTabBar
-import com.snaptube.downloader.ui.theme.FacebookBlue
-import com.snaptube.downloader.ui.theme.InstagramPink
 import com.snaptube.downloader.ui.theme.SnaptubeBlack
 import com.snaptube.downloader.ui.theme.SnaptubeCard
-import com.snaptube.downloader.ui.theme.SnaptubeSearchBorder
-import com.snaptube.downloader.ui.theme.SnaptubeTextPrimary
 import com.snaptube.downloader.ui.theme.SnaptubeTextSecondary
 import com.snaptube.downloader.ui.theme.SnaptubeYellow
-import com.snaptube.downloader.ui.theme.TikTokCyan
-import com.snaptube.downloader.ui.theme.YouTubeRed
 import kotlinx.coroutines.launch
 
 @Composable
@@ -98,16 +82,18 @@ fun HomeScreen(
             .fillMaxSize()
             .background(SnaptubeBlack)
     ) {
-        // 3D Social Grid Header fading into dark background
+        // 3D Social Grid Header positioned safely below top navigation tabs
         SocialGridHeader(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 40.dp)
+                .fillMaxWidth()
+                .padding(top = 95.dp)
         )
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -115,10 +101,10 @@ fun HomeScreen(
             TopTabBar(
                 selectedTab = selectedTopTab,
                 onTabSelected = onTopTabSelected,
-                modifier = Modifier.padding(top = 8.dp)
+                modifier = Modifier.padding(top = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(55.dp))
+            Spacer(modifier = Modifier.height(48.dp))
 
             // Brand Typography: "VidSnap"
             Text(
@@ -130,7 +116,7 @@ fun HomeScreen(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(44.dp))
 
             // Search to download pill bar
             SearchDownloadBar(
@@ -141,7 +127,7 @@ fun HomeScreen(
             )
 
             if (isLoading) {
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(28.dp))
                 CircularProgressIndicator(
                     color = SnaptubeYellow,
                     modifier = Modifier.size(36.dp)
@@ -154,7 +140,7 @@ fun HomeScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(42.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
             // Quick Paste Clipboard Button
             Box(
@@ -180,40 +166,7 @@ fun HomeScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // Social Platform Shortcuts
-            Text(
-                text = "SUPPORTED SITES",
-                color = SnaptubeTextSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                PlatformIconBadge("YouTube", YouTubeRed) {
-                    onTopTabSelected("YouTube")
-                }
-                PlatformIconBadge("Instagram", InstagramPink) {
-                    searchQuery = "https://www.instagram.com/reel/"
-                }
-                PlatformIconBadge("TikTok", TikTokCyan) {
-                    searchQuery = "https://www.tiktok.com/"
-                }
-                PlatformIconBadge("Facebook", FacebookBlue) {
-                    searchQuery = "https://www.facebook.com/watch"
-                }
-            }
-
-            Spacer(modifier = Modifier.height(80.dp))
+            Spacer(modifier = Modifier.height(60.dp))
         }
 
         // Download Bottom Sheet with quality choices
@@ -232,30 +185,5 @@ fun HomeScreen(
                 onDismiss = { resolvedMedia = null }
             )
         }
-    }
-}
-
-@Composable
-private fun PlatformIconBadge(name: String, color: Color, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable { onClick() }
-    ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(color.copy(alpha = 0.2f)),
-            contentAlignment = Alignment.Center
-        ) {
-            when (name) {
-                "YouTube" -> Icon(Icons.Default.PlayArrow, contentDescription = name, tint = color, modifier = Modifier.size(26.dp))
-                "Instagram" -> Icon(Icons.Default.CameraAlt, contentDescription = name, tint = color, modifier = Modifier.size(24.dp))
-                "TikTok" -> Icon(Icons.Default.MusicNote, contentDescription = name, tint = color, modifier = Modifier.size(24.dp))
-                "Facebook" -> Text("f", color = color, fontSize = 24.sp, fontWeight = FontWeight.Black)
-            }
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(text = name, color = SnaptubeTextSecondary, fontSize = 11.sp)
     }
 }
