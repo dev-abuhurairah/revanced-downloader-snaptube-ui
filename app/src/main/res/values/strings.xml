@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Snaptube</string>
+    <string name="app_name">VidSnap</string>
     <string name="search_hint">Search to download</string>
     <string name="tab_search">Search</string>
     <string name="tab_youtube">YouTube</string>

@@ -1,12 +1,97 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Background rounded squircle shield with modern gradient -->
     <path
-        android:fillColor="#FFCC00"
-        android:pathData="M34,24h40c5.52,0 10,4.48 10,10v40c0,5.52 -4.48,10 -10,10H34c-5.52,0 -10,-4.48 -10,-10V34C24,28.48 28.48,24 34,24z" />
+        android:pathData="M54,16 C76,16 92,32 92,54 C92,76 76,92 54,92 C32,92 16,76 16,54 C16,32 32,16 54,16 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="16"
+                android:startY="16"
+                android:endX="92"
+                android:endY="92"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#24242A" />
+                <item android:offset="1.0" android:color="#121215" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Outer glowing ring accent -->
     <path
-        android:fillColor="#000000"
-        android:pathData="M54,64l-14,-14h9V36h10v14h9L54,64zM40,68h28v4H40V68z" />
+        android:pathData="M54,18 C74.9,18 90,33.1 90,54 C90,74.9 74.9,90 54,90 C33.1,90 18,74.9 18,54 C18,33.1 33.1,18 54,18 Z"
+        android:strokeWidth="1.5">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="18"
+                android:startY="18"
+                android:endX="90"
+                android:endY="90"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFD700" />
+                <item android:offset="0.5" android:color="#FF9500" />
+                <item android:offset="1.0" android:color="#332A00" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Stylized Modern 'V' Wings + Download Arrow -->
+    <!-- Left Wing of V -->
+    <path
+        android:pathData="M32,36 L44,36 L54,58 L46,62 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="32"
+                android:startY="36"
+                android:endX="54"
+                android:endY="62"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE57F" />
+                <item android:offset="1.0" android:color="#FFC107" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Right Wing of V -->
+    <path
+        android:pathData="M76,36 L64,36 L54,58 L62,62 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="76"
+                android:startY="36"
+                android:endX="54"
+                android:endY="62"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFB300" />
+                <item android:offset="1.0" android:color="#FF8F00" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Central Fast Download Arrow -->
+    <path
+        android:pathData="M51,32 L57,32 L57,56 L64,56 L54,70 L44,56 L51,56 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="44"
+                android:startY="32"
+                android:endX="64"
+                android:endY="70"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.3" android:color="#FFE082" />
+                <item android:offset="1.0" android:color="#FFB300" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Bottom Horizontal Bar / Base -->
+    <path
+        android:pathData="M44,74 L64,74 L64,77 L44,77 Z"
+        android:fillColor="#FFD54F" />
+
 </vector>

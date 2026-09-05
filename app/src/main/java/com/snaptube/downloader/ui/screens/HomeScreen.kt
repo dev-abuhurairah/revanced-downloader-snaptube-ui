@@ -119,11 +119,11 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(55.dp))
 
-            // Brand Typography: "Snaptube" (matching screenshot)
+            // Brand Typography: "VidSnap"
             Text(
-                text = "Snaptube",
+                text = "VidSnap",
                 color = SnaptubeYellow,
-                fontSize = 42.sp,
+                fontSize = 44.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = (-0.5).sp,
                 textAlign = TextAlign.Center

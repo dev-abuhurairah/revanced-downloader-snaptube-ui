@@ -83,7 +83,7 @@ fun SettingsScreen(
                         SettingsRow(
                             icon = Icons.Default.Folder,
                             title = "Download Location",
-                            subtitle = "/Storage/emulated/0/Download/Snaptube"
+                            subtitle = "/Storage/emulated/0/Download/VidSnap"
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         SettingsRow(
@@ -161,7 +161,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsRow(
                             icon = Icons.Default.Info,
-                            title = "Snaptube Downloader",
+                            title = "VidSnap Pro",
                             subtitle = "Version 1.0.0 (Cloud Actions Build)"
                         )
                         Spacer(modifier = Modifier.height(10.dp))

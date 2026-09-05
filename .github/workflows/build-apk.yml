@@ -1,4 +1,4 @@
-name: Build Snaptube Downloader APK
+name: Build VidSnap Downloader APK
 
 on:
   workflow_dispatch:
@@ -52,7 +52,7 @@ jobs:
           mkdir -p artifacts
           APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
           if [ -n "$APK_PATH" ]; then
-            cp "$APK_PATH" artifacts/Snaptube-Downloader.apk
+            cp "$APK_PATH" artifacts/VidSnap-Downloader.apk
             echo "Found APK: $APK_PATH"
             echo "apk_exists=true" >> $GITHUB_OUTPUT
           else
@@ -65,19 +65,19 @@ jobs:
         if: steps.locate_apk.outputs.apk_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Snaptube-Downloader-APK
-          path: artifacts/Snaptube-Downloader.apk
+          name: VidSnap-Downloader-APK
+          path: artifacts/VidSnap-Downloader.apk
           retention-days: 30
 
       - name: Create Release (Optional)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/Snaptube-Downloader.apk
+          files: artifacts/VidSnap-Downloader.apk
           name: Release ${{ github.ref_name }}
           body: |
-            ### 🚀 Snaptube Downloader APK Ready!
-            - Download `Snaptube-Downloader.apk` below and install directly onto your Android device.
+            ### 🚀 VidSnap Downloader APK Ready!
+            - Download `VidSnap-Downloader.apk` below and install directly onto your Android device.
             - Supports Instagram Reels, YouTube, TikTok, Facebook, Twitter & more.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
