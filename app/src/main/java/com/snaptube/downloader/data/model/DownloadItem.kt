@@ -19,5 +19,8 @@ data class DownloadItem(
     val totalBytes: Long = 0,
     val downloadedBytes: Long = 0,
     val status: DownloadStatus = DownloadStatus.DOWNLOADING,
+    val downloadSpeed: String = "",
+    val errorMessage: String = "",
     val timestamp: Long = System.currentTimeMillis()
 )
+

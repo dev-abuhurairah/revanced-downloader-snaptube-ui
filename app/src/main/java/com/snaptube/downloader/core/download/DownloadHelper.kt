@@ -6,7 +6,6 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import com.snaptube.downloader.core.extractor.VideoExtractorEngine
-import com.snaptube.downloader.core.storage.MediaDestination
 import com.snaptube.downloader.core.storage.StorageManager
 import com.snaptube.downloader.data.model.DownloadItem
 import com.snaptube.downloader.data.model.DownloadStatus
@@ -24,7 +23,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -37,8 +36,9 @@ object DownloadHelper {
 
     private var appContext: Context? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO)
+    private val activeMediaInfoCache = ConcurrentHashMap<Long, MediaInfo>()
 
-    // Extended timeouts for large video downloads
+    // High throughput client with extended timeouts
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -103,6 +103,8 @@ object DownloadHelper {
                         totalBytes = obj.optLong("totalBytes", 0L),
                         downloadedBytes = obj.optLong("downloadedBytes", 0L),
                         status = status,
+                        downloadSpeed = "",
+                        errorMessage = obj.optString("errorMessage", ""),
                         timestamp = obj.optLong("timestamp", System.currentTimeMillis())
                     )
                 )
@@ -130,6 +132,7 @@ object DownloadHelper {
                     put("totalBytes", item.totalBytes)
                     put("downloadedBytes", item.downloadedBytes)
                     put("status", item.status.name)
+                    put("errorMessage", item.errorMessage)
                     put("timestamp", item.timestamp)
 
                     val formatObj = JSONObject().apply {
@@ -170,11 +173,13 @@ object DownloadHelper {
         val downloadUrl = format.directUrl
 
         if (downloadUrl.isNullOrBlank() || !VideoExtractorEngine.isValidHttpUrl(downloadUrl)) {
-            showToast(context, "Cannot download: Direct stream URL is unavailable or invalid.")
+            showToast(context, "Cannot download: Direct stream URL is unavailable.")
             return
         }
 
         val downloadId = System.currentTimeMillis()
+        activeMediaInfoCache[downloadId] = mediaInfo
+
         val sanitizedTitle = sanitizeForFilename(mediaInfo.title)
             .take(45)
             .ifEmpty { "VidSnap_Video" }
@@ -194,7 +199,8 @@ object DownloadHelper {
             localFilePath = null,
             format = format,
             progress = 0,
-            status = DownloadStatus.DOWNLOADING
+            status = DownloadStatus.DOWNLOADING,
+            downloadSpeed = "Connecting..."
         )
 
         _downloadList.value = listOf(initialItem) + _downloadList.value
@@ -213,8 +219,9 @@ object DownloadHelper {
                 )
 
                 if (!success) {
-                    // Retry once with different headers
-                    Log.w(TAG, "First download attempt failed, retrying with alternate headers...")
+                    // Retry with alternate browser headers
+                    Log.w(TAG, "Attempt 1 failed, retrying with browser user-agent...")
+                    updateSpeed(downloadId, "Retrying...")
                     val retrySuccess = executeStreamingDownload(
                         context = context,
                         downloadId = downloadId,
@@ -225,17 +232,76 @@ object DownloadHelper {
                         useAlternateHeaders = true
                     )
                     if (!retrySuccess) {
-                        markDownloadFailed(downloadId)
-                        showToast(context, "Download failed. The stream may have expired - try re-fetching the link.")
+                        markDownloadFailed(downloadId, "Download failed - stream may have expired.")
+                        showToast(context, "Download failed. Please re-fetch the video link.")
                     }
                 }
             } catch (c: CancellationException) {
-                markDownloadFailed(downloadId)
+                markDownloadFailed(downloadId, "Cancelled")
                 throw c
             } catch (t: Throwable) {
                 Log.e(TAG, "Download failed with exception", t)
-                markDownloadFailed(downloadId)
+                markDownloadFailed(downloadId, t.localizedMessage ?: "Network error")
                 showToast(context, "Download failed: ${t.localizedMessage ?: "Network error"}")
+            }
+        }
+    }
+
+    fun retryDownload(context: Context, downloadId: Long) {
+        val item = _downloadList.value.firstOrNull { it.id == downloadId } ?: return
+        val cachedInfo = activeMediaInfoCache[downloadId]
+        val info = cachedInfo ?: MediaInfo(
+            sourceUrl = item.sourceUrl,
+            title = item.title,
+            author = "Creator",
+            duration = "Video",
+            thumbnailUrl = item.thumbnailUrl,
+            platform = VideoExtractorEngine.detectPlatform(item.sourceUrl),
+            formats = listOf(item.format)
+        )
+
+        // Reset status
+        _downloadList.value = _downloadList.value.map {
+            if (it.id == downloadId) it.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = "", downloadSpeed = "Connecting...") else it
+        }
+
+        coroutineScope.launch {
+            // First attempt to re-resolve if direct URL is expired
+            var directUrl = item.format.directUrl
+            if (directUrl.isNullOrBlank()) {
+                val res = VideoExtractorEngine.resolveMedia(item.sourceUrl)
+                if (res is com.snaptube.downloader.core.model.ResolveResult.Success) {
+                    val matching = res.mediaInfo.formats.firstOrNull { it.mediaType == item.format.mediaType }
+                        ?: res.mediaInfo.formats.firstOrNull()
+                    if (matching != null) {
+                        directUrl = matching.directUrl
+                    }
+                }
+            }
+
+            if (directUrl.isNullOrBlank()) {
+                markDownloadFailed(downloadId, "Could not refresh stream link.")
+                showToast(context, "Could not refresh stream link. Please copy link again.")
+                return@launch
+            }
+
+            val sanitizedTitle = sanitizeForFilename(item.title).take(45).ifEmpty { "VidSnap_Video" }
+            val sanitizedQuality = sanitizeForFilename(item.format.resolutionOrQuality).take(20).ifEmpty { "HD" }
+            val sanitizedExt = sanitizeForFilename(item.format.fileExtension).ifEmpty { "mp4" }
+            val fileName = "${sanitizedTitle}_${sanitizedQuality}.${sanitizedExt}"
+
+            val success = executeStreamingDownload(
+                context = context,
+                downloadId = downloadId,
+                streamUrl = directUrl,
+                sourceReferer = item.sourceUrl,
+                fileName = fileName,
+                isAudio = item.format.mediaType == MediaType.AUDIO
+            )
+
+            if (!success) {
+                markDownloadFailed(downloadId, "Retry failed.")
+                showToast(context, "Retry failed. Try opening in browser.")
             }
         }
     }
@@ -255,18 +321,17 @@ object DownloadHelper {
 
         val reqBuilder = Request.Builder().url(streamUrl)
 
-        // Critical: Use the right User-Agent depending on stream source
+        // Headers customized to stream origin
         if (useAlternateHeaders) {
-            // Alternate attempt: use a browser User-Agent
             reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        } else if (streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com") || streamUrl.contains("ytimg.com")) {
-            // YouTube/Google Video streams need specific handling
+        } else if (streamUrl.contains("googlevideo.com")) {
             reqBuilder.addHeader("User-Agent", "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)")
+            reqBuilder.addHeader("Range", "bytes=0-")
         } else {
             reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
         }
 
-        // Forward session cookies from WebView (essential for Instagram CDN and authenticated streams)
+        // Attach cookies from in-app browser WebView session
         val cookieManager = runCatching { android.webkit.CookieManager.getInstance() }.getOrNull()
         val streamCookies = runCatching { cookieManager?.getCookie(streamUrl) }.getOrNull()
         val refererCookies = runCatching { cookieManager?.getCookie(sourceReferer) }.getOrNull()
@@ -291,30 +356,16 @@ object DownloadHelper {
         }
 
         reqBuilder.addHeader("Accept", "*/*")
-        reqBuilder.addHeader("Accept-Language", "en-US,en;q=0.9")
-        // Request identity encoding (no compression) so we get raw bytes for progress tracking
         reqBuilder.addHeader("Accept-Encoding", "identity;q=1, *;q=0")
-        // Connection keep-alive for better streaming performance
         reqBuilder.addHeader("Connection", "keep-alive")
-
-        // CRITICAL: YouTube/Google Video CDN requires Range header or it throttles to ~50KB/s
-        if (isYouTube) {
-            reqBuilder.addHeader("Range", "bytes=0-")
-        }
 
         val request = reqBuilder.build()
 
         try {
             val response = httpClient.newCall(request).execute()
-            // 200 = full content, 206 = partial content (expected when Range header is used)
             if (!response.isSuccessful && response.code != 206) {
                 Log.w(TAG, "Download HTTP ${response.code} for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
-
-                // 403 usually means the URL has expired or needs different auth
-                if (response.code == 403) {
-                    showToast(context, "Stream URL expired (403). Please re-fetch the video link.")
-                }
                 return@withContext false
             }
 
@@ -322,7 +373,6 @@ object DownloadHelper {
             if (contentType.contains("text/html") || contentType.contains("text/plain")) {
                 Log.w(TAG, "Got HTML/text content instead of media for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
-                showToast(context, "Link returned a web page instead of media stream.")
                 return@withContext false
             }
 
@@ -331,7 +381,6 @@ object DownloadHelper {
                 return@withContext false
             }
             val contentLength = body.contentLength()
-            Log.d(TAG, "Download started: $fileName, content-length: $contentLength")
 
             val outputStream = StorageManager.openOutputStream(context, destination) ?: run {
                 StorageManager.discardMediaDestination(context, destination)
@@ -339,29 +388,43 @@ object DownloadHelper {
             }
             val inputStream = body.byteStream()
 
-            val buffer = ByteArray(32768) // 32KB buffer for better throughput
+            val buffer = ByteArray(65536) // 64KB buffer for high speed streaming
             var bytesRead: Int
             var totalRead = 0L
             var lastProgress = 0
+            var lastSpeedTimestamp = System.currentTimeMillis()
+            var bytesSinceLastSpeed = 0L
 
             outputStream.use { out ->
                 inputStream.use { input ->
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         out.write(buffer, 0, bytesRead)
                         totalRead += bytesRead
+                        bytesSinceLastSpeed += bytesRead
+
+                        val now = System.currentTimeMillis()
+                        val elapsed = now - lastSpeedTimestamp
+
+                        // Update speed every 800ms
+                        var speedText = ""
+                        if (elapsed >= 800) {
+                            val bytesPerSec = (bytesSinceLastSpeed * 1000) / elapsed
+                            speedText = formatSpeed(bytesPerSec)
+                            lastSpeedTimestamp = now
+                            bytesSinceLastSpeed = 0L
+                        }
 
                         if (contentLength > 0) {
                             val currentProgress = ((totalRead * 100) / contentLength).toInt().coerceIn(0, 99)
-                            if (currentProgress > lastProgress) {
+                            if (currentProgress > lastProgress || speedText.isNotBlank()) {
                                 lastProgress = currentProgress
-                                updateProgress(downloadId, currentProgress, totalRead, contentLength)
+                                updateProgress(downloadId, currentProgress, totalRead, contentLength, speedText)
                             }
                         } else {
-                            // Unknown content length - update progress by bytes downloaded
                             val mbDownloaded = totalRead / (1024 * 1024)
-                            if (mbDownloaded > lastProgress) {
+                            if (mbDownloaded > lastProgress || speedText.isNotBlank()) {
                                 lastProgress = mbDownloaded.toInt()
-                                updateProgress(downloadId, -1, totalRead, 0L) // -1 = indeterminate
+                                updateProgress(downloadId, -1, totalRead, 0L, speedText)
                             }
                         }
                     }
@@ -369,25 +432,21 @@ object DownloadHelper {
                 }
             }
 
-            Log.d(TAG, "Download finished: $fileName, total bytes: $totalRead")
-
-            // Minimum valid media verification (> 10 KB for audio, > 30 KB for video)
+            // Verify minimum size (> 10 KB for audio, > 30 KB for video)
             val minSize = if (isAudio) 10 * 1024L else 30 * 1024L
             if (totalRead < minSize) {
-                Log.w(TAG, "Download too small: $totalRead bytes (min: $minSize)")
+                Log.w(TAG, "Downloaded file too small: $totalRead bytes")
                 StorageManager.discardMediaDestination(context, destination)
-                showToast(context, "Download failed: Incomplete stream data received (${totalRead / 1024} KB).")
                 return@withContext false
             }
 
             val committed = StorageManager.commitMediaDestination(context, destination)
             if (!committed) {
-                Log.e(TAG, "Failed to commit media destination for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
                 return@withContext false
             }
 
-            // Update state with completed status and actual local identifier
+            // Mark completed
             _downloadList.value = _downloadList.value.map {
                 if (it.id == downloadId) {
                     it.copy(
@@ -395,39 +454,56 @@ object DownloadHelper {
                         status = DownloadStatus.COMPLETED,
                         localFilePath = destination.identifier,
                         downloadedBytes = totalRead,
-                        totalBytes = totalRead
+                        totalBytes = totalRead,
+                        downloadSpeed = "Completed",
+                        errorMessage = ""
                     )
                 } else it
             }
             persistDownloads()
 
-            showToast(context, "✅ Saved successfully: $fileName")
+            showToast(context, "✅ Downloaded to Gallery: $fileName")
             true
         } catch (e: Exception) {
             StorageManager.discardMediaDestination(context, destination)
             if (e is CancellationException) throw e
-            Log.e(TAG, "Download stream exception for $fileName", e)
+            Log.e(TAG, "Download streaming exception for $fileName", e)
             false
         }
     }
 
-    private fun markDownloadFailed(downloadId: Long) {
+    private fun markDownloadFailed(downloadId: Long, reason: String = "Download failed") {
         _downloadList.value = _downloadList.value.map {
-            if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
+            if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED, errorMessage = reason, downloadSpeed = "") else it
         }
         persistDownloads()
     }
 
-    private fun updateProgress(downloadId: Long, progress: Int, downloaded: Long, total: Long) {
+    private fun updateProgress(downloadId: Long, progress: Int, downloaded: Long, total: Long, speed: String) {
         _downloadList.value = _downloadList.value.map {
             if (it.id == downloadId) {
                 it.copy(
                     progress = if (progress >= 0) progress else it.progress,
                     downloadedBytes = downloaded,
                     totalBytes = total,
+                    downloadSpeed = speed.ifEmpty { it.downloadSpeed },
                     status = DownloadStatus.DOWNLOADING
                 )
             } else it
+        }
+    }
+
+    private fun updateSpeed(downloadId: Long, speed: String) {
+        _downloadList.value = _downloadList.value.map {
+            if (it.id == downloadId) it.copy(downloadSpeed = speed) else it
+        }
+    }
+
+    private fun formatSpeed(bytesPerSec: Long): String {
+        return when {
+            bytesPerSec >= 1_048_576 -> String.format("%.1f MB/s", bytesPerSec / 1_048_576.0)
+            bytesPerSec >= 1024 -> String.format("%.0f KB/s", bytesPerSec / 1024.0)
+            else -> "$bytesPerSec B/s"
         }
     }
 
@@ -438,6 +514,7 @@ object DownloadHelper {
             StorageManager.deleteMedia(ctx, target.localFilePath)
         }
         _downloadList.value = _downloadList.value.filter { it.id != id }
+        activeMediaInfoCache.remove(id)
         persistDownloads()
     }
 
@@ -450,3 +527,4 @@ object DownloadHelper {
         }
     }
 }
+

@@ -2,12 +2,20 @@ package com.snaptube.downloader.ui.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -45,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +69,85 @@ import com.snaptube.downloader.ui.theme.SnaptubeTextPrimary
 import com.snaptube.downloader.ui.theme.SnaptubeTextSecondary
 import com.snaptube.downloader.ui.theme.SnaptubeYellow
 import kotlinx.coroutines.launch
+
+private class VidSnapMediaBridge(
+    private val onMediaDetected: (url: String, title: String?, poster: String?) -> Unit
+) {
+    @JavascriptInterface
+    fun onMediaFound(url: String?, title: String?, poster: String?) {
+        if (!url.isNullOrBlank() && url.startsWith("http")) {
+            Handler(Looper.getMainLooper()).post {
+                onMediaDetected(url, title, poster)
+            }
+        }
+    }
+}
+
+private const val SNIFFER_JS = """
+(function() {
+    if (window.__vidsnap_hooked) return;
+    window.__vidsnap_hooked = true;
+
+    function reportMedia(url, poster) {
+        if (!url || typeof url !== 'string') return;
+        if (url.indexOf('blob:') === 0 || url.indexOf('http') !== 0) return;
+        var t = document.title || '';
+        try {
+            if (window.VidSnapBridge) {
+                window.VidSnapBridge.onMediaFound(url, t, poster || '');
+            }
+        } catch(e) {}
+    }
+
+    // 1. Hook HTMLMediaElement
+    var origPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function() {
+        var src = this.currentSrc || this.src;
+        if (src) reportMedia(src, this.poster);
+        return origPlay.apply(this, arguments);
+    };
+
+    // 2. Hook XHR for streaming media endpoints
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        if (typeof url === 'string') {
+            var u = url.toLowerCase();
+            if ((u.indexOf('.mp4') !== -1 || u.indexOf('videoplayback') !== -1 || u.indexOf('mime=video') !== -1) &&
+                u.indexOf('.jpg') === -1 && u.indexOf('.png') === -1 && u.indexOf('.webp') === -1) {
+                reportMedia(url, '');
+            }
+        }
+        return origOpen.apply(this, arguments);
+    };
+
+    // 3. Hook Fetch API
+    if (window.fetch) {
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            var u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+            if (u && typeof u === 'string') {
+                var ul = u.toLowerCase();
+                if ((ul.indexOf('.mp4') !== -1 || ul.indexOf('videoplayback') !== -1 || ul.indexOf('mime=video') !== -1) &&
+                    ul.indexOf('.jpg') === -1 && ul.indexOf('.png') === -1) {
+                    reportMedia(u, '');
+                }
+            }
+            return origFetch.apply(this, arguments);
+        };
+    }
+
+    // 4. Periodic DOM scan for video elements
+    setInterval(function() {
+        var vids = document.getElementsByTagName('video');
+        for (var i = 0; i < vids.length; i++) {
+            var s = vids[i].currentSrc || vids[i].src;
+            if (s && s.indexOf('http') === 0 && s.indexOf('blob:') !== 0) {
+                reportMedia(s, vids[i].poster);
+            }
+        }
+    }, 1500);
+})();
+"""
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -78,6 +166,7 @@ fun BrowserScreen(
     var isResolving by remember { mutableStateOf(false) }
     var resolvedMedia by remember { mutableStateOf<MediaInfo?>(null) }
     var detectedStreamUrl by remember { mutableStateOf<String?>(null) }
+    var detectedPoster by remember { mutableStateOf<String?>(null) }
 
     // Intercept system back button
     BackHandler(enabled = true) {
@@ -88,40 +177,27 @@ fun BrowserScreen(
         }
     }
 
-    fun downloadCurrentPage() {
+    fun openDownloadSheet() {
         val target = webViewInstance?.url ?: currentUrl
+        val platform = VideoExtractorEngine.detectPlatform(target)
+
+        if (!detectedStreamUrl.isNullOrBlank()) {
+            val media = VideoExtractorEngine.createDirectStreamMedia(
+                sourceUrl = target,
+                directStreamUrl = detectedStreamUrl!!,
+                platform = platform,
+                pageTitle = pageTitle,
+                thumbnail = detectedPoster
+            )
+            resolvedMedia = media
+            return
+        }
+
+        // Otherwise resolve page URL
         isResolving = true
-
-        // First attempt: inspect DOM for active video element (Instagram, TikTok, YouTube web)
-        webViewInstance?.evaluateJavascript(
-            """
-            (function() {
-                var vids = document.getElementsByTagName('video');
-                for (var i = 0; i < vids.length; i++) {
-                    var s = vids[i].src || '';
-                    if (s.indexOf('http') === 0 && s.indexOf('blob:') !== 0) return s;
-                    var sources = vids[i].getElementsByTagName('source');
-                    for (var j = 0; j < sources.length; j++) {
-                        var ss = sources[j].src || '';
-                        if (ss.indexOf('http') === 0 && ss.indexOf('blob:') !== 0) return ss;
-                    }
-                }
-                return '';
-            })();
-            """.trimIndent()
-        ) { domResult ->
-            val cleanDom = domResult?.trim('"', '\'', ' ', '\\')
-            val effectiveStream = if (!cleanDom.isNullOrBlank() && cleanDom.startsWith("http")) {
-                VideoExtractorEngine.cleanMediaUrl(cleanDom)
-            } else {
-                detectedStreamUrl
-            }
-
-            coroutineScope.launch {
-                val res = VideoExtractorEngine.resolveMedia(
-                    inputQueryOrUrl = target,
-                    directStreamUrl = effectiveStream
-                )
+        coroutineScope.launch {
+            try {
+                val res = VideoExtractorEngine.resolveMedia(target)
                 isResolving = false
                 when (res) {
                     is ResolveResult.Success -> {
@@ -131,6 +207,9 @@ fun BrowserScreen(
                         Toast.makeText(context, res.userMessage, Toast.LENGTH_SHORT).show()
                     }
                 }
+            } catch (t: Throwable) {
+                isResolving = false
+                Toast.makeText(context, "Could not extract video from page.", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -141,7 +220,7 @@ fun BrowserScreen(
             .background(SnaptubeBlack)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Browser Address & Action Bar with statusBarsPadding for edge-to-edge support
+            // Browser Address & Action Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -229,61 +308,63 @@ fun BrowserScreen(
                             userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
                             cacheMode = WebSettings.LOAD_DEFAULT
                         }
+
+                        // Attach JavaScript Interface for Snaptube-grade active media sniffing
+                        addJavascriptInterface(
+                            VidSnapMediaBridge { url, title, poster ->
+                                detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(url)
+                                if (!title.isNullOrBlank()) pageTitle = title
+                                if (!poster.isNullOrBlank()) detectedPoster = poster
+                            },
+                            "VidSnapBridge"
+                        )
+
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 currentUrl = url.orEmpty()
+                                detectedStreamUrl = null
+                                view?.evaluateJavascript(SNIFFER_JS, null)
                             }
+
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 currentUrl = url.orEmpty()
                                 pageTitle = view?.title.orEmpty()
-                                // Auto-sniff DOM video when page finishes loading
-                                view?.evaluateJavascript(
-                                    """
-                                    (function() {
-                                        var vids = document.getElementsByTagName('video');
-                                        for (var i = 0; i < vids.length; i++) {
-                                            var s = vids[i].src || '';
-                                            if (s.indexOf('http') === 0 && s.indexOf('blob:') !== 0) return s;
-                                            var sources = vids[i].getElementsByTagName('source');
-                                            for (var j = 0; j < sources.length; j++) {
-                                                var ss = sources[j].src || '';
-                                                if (ss.indexOf('http') === 0 && ss.indexOf('blob:') !== 0) return ss;
-                                            }
-                                        }
-                                        return '';
-                                    })();
-                                    """.trimIndent()
-                                ) { domRes ->
-                                    val cleanDom = domRes?.trim('"', '\'', ' ', '\\')
-                                    if (!cleanDom.isNullOrBlank() && cleanDom.startsWith("http")) {
-                                        detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(cleanDom)
-                                    }
-                                }
+                                view?.evaluateJavascript(SNIFFER_JS, null)
                             }
+
                             override fun shouldInterceptRequest(
                                 view: WebView?,
                                 request: android.webkit.WebResourceRequest?
                             ): android.webkit.WebResourceResponse? {
                                 val reqUrl = request?.url?.toString().orEmpty()
                                 val lower = reqUrl.lowercase()
-                                if (lower.contains(".mp4") || lower.contains("videoplayback") ||
-                                    lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")) {
+
+                                val isMediaStream = (
+                                    lower.contains(".mp4") ||
+                                    lower.contains(".m4a") ||
+                                    lower.contains(".webm") ||
+                                    lower.contains("videoplayback") ||
+                                    lower.contains("mime=video") ||
+                                    lower.contains("video_mp4") ||
+                                    (lower.contains("cdninstagram.com") && (lower.contains("&bytestart=") || lower.contains(".mp4?"))) ||
+                                    (lower.contains("fbcdn.net") && (lower.contains("oe=") && lower.contains(".mp4")))
+                                ) && !lower.contains(".jpg") && !lower.contains(".png") &&
+                                     !lower.contains(".webp") && !lower.contains(".css") &&
+                                     !lower.contains(".js") && !lower.contains("analytics")
+
+                                if (isMediaStream) {
                                     detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(reqUrl)
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
-                            override fun onLoadResource(view: WebView?, url: String?) {
-                                super.onLoadResource(view, url)
-                                val lower = url?.lowercase().orEmpty()
-                                if (lower.contains(".mp4") || lower.contains("videoplayback") ||
-                                    lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")) {
-                                    detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(url.orEmpty())
-                                }
-                            }
                         }
+
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 loadProgress = newProgress / 100f
+                                if (newProgress > 40) {
+                                    view?.evaluateJavascript(SNIFFER_JS, null)
+                                }
                             }
                             override fun onReceivedTitle(view: WebView?, title: String?) {
                                 pageTitle = title.orEmpty()
@@ -301,29 +382,34 @@ fun BrowserScreen(
             )
         }
 
-        // Floating Video Ready Indicator
-        if (detectedStreamUrl != null) {
+        // Floating Video Ready Indicator Pill
+        AnimatedVisibility(
+            visible = detectedStreamUrl != null,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 85.dp, bottom = 32.dp)
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 85.dp, bottom = 32.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .background(SnaptubeYellow)
-                    .clickable { downloadCurrentPage() }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .clickable { openDownloadSheet() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
                 Text(
                     text = "⚡ Video Ready to Download",
                     color = SnaptubeBlack,
                     fontSize = 12.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold
                 )
             }
         }
 
-        // Floating VidSnap Yellow Download Button
+        // Floating Snaptube Download Action Button
         FloatingActionButton(
-            onClick = { downloadCurrentPage() },
+            onClick = { openDownloadSheet() },
             containerColor = SnaptubeYellow,
             contentColor = SnaptubeBlack,
             shape = CircleShape,
@@ -352,3 +438,4 @@ fun BrowserScreen(
         }
     }
 }
+

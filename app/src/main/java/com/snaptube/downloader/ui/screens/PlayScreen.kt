@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -209,6 +210,25 @@ fun PlayScreen(
                         },
                         onDeleteClick = {
                             DownloadHelper.removeDownload(item.id)
+                        },
+                        onRetryClick = {
+                            DownloadHelper.retryDownload(context, item.id)
+                        },
+                        onShareClick = {
+                            try {
+                                val path = item.localFilePath
+                                if (!path.isNullOrBlank()) {
+                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = if (item.format.mediaType == MediaType.AUDIO) "audio/*" else "video/*"
+                                        val uri = if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
+                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(shareIntent, "Share Video"))
+                                }
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Cannot share media file", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                     )
                 }
@@ -221,7 +241,9 @@ fun PlayScreen(
 private fun DownloadCard(
     item: DownloadItem,
     onPlayClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onRetryClick: () -> Unit = {},
+    onShareClick: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -264,20 +286,31 @@ private fun DownloadCard(
                     )
                 }
 
-                IconButton(onClick = onPlayClick) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(SnaptubeYellow),
-                        contentAlignment = Alignment.Center
-                    ) {
+                if (item.status == DownloadStatus.COMPLETED) {
+                    IconButton(onClick = onShareClick) {
                         Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Play",
-                            tint = SnaptubeBlack,
-                            modifier = Modifier.size(22.dp)
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share",
+                            tint = SnaptubeTextSecondary,
+                            modifier = Modifier.size(20.dp)
                         )
+                    }
+
+                    IconButton(onClick = onPlayClick) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(SnaptubeYellow),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = SnaptubeBlack,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
 
@@ -292,35 +325,63 @@ private fun DownloadCard(
             }
 
             if (item.status == DownloadStatus.DOWNLOADING) {
-                Spacer(modifier = Modifier.height(8.dp))
-                if (item.progress > 0) {
-                    LinearProgressIndicator(
-                        progress = item.progress / 100f,
-                        modifier = Modifier.fillMaxWidth().height(3.dp),
-                        color = SnaptubeYellow,
-                        trackColor = SnaptubeBlack
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = if (item.progress > 0) item.progress / 100f else 0f,
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    color = SnaptubeYellow,
+                    trackColor = SnaptubeBlack
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "${item.progress}%${if (item.totalBytes > 0) " • ${item.downloadedBytes / (1024 * 1024)}/${item.totalBytes / (1024 * 1024)} MB" else ""}",
+                        text = "${item.progress}%" + if (item.totalBytes > 0) " (${item.downloadedBytes / (1024 * 1024)}/${item.totalBytes / (1024 * 1024)} MB)" else "",
                         color = SnaptubeTextSecondary,
                         fontSize = 11.sp
                     )
-                } else {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().height(3.dp),
-                        color = SnaptubeYellow,
-                        trackColor = SnaptubeBlack
-                    )
+                    if (item.downloadSpeed.isNotBlank()) {
+                        Text(
+                            text = "⚡ ${item.downloadSpeed}",
+                            color = SnaptubeYellow,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             } else if (item.status == DownloadStatus.FAILED) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "❌ Download failed - tap to retry",
-                    color = Color(0xFFFF5252),
-                    fontSize = 11.sp
-                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "❌ " + item.errorMessage.ifBlank { "Download failed" },
+                        color = Color(0xFFFF5252),
+                        fontSize = 11.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SnaptubeYellow)
+                            .clickable { onRetryClick() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "🔄 Retry",
+                            color = SnaptubeBlack,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
 }
+

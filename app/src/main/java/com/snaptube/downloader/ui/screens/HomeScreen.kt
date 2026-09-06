@@ -62,6 +62,7 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+    var loadingStatus by remember { mutableStateOf("Analyzing video stream...") }
     var resolvedMedia by remember { mutableStateOf<MediaInfo?>(null) }
 
     fun processQuery(query: String) {
@@ -79,6 +80,15 @@ fun HomeScreen(
             return
         }
 
+        val platformLabel = when {
+            extractedUrl.contains("tiktok.com", ignoreCase = true) -> "TikTok"
+            extractedUrl.contains("youtube.com", ignoreCase = true) || extractedUrl.contains("youtu.be", ignoreCase = true) -> "YouTube"
+            extractedUrl.contains("instagram.com", ignoreCase = true) -> "Instagram"
+            extractedUrl.contains("twitter.com", ignoreCase = true) || extractedUrl.contains("x.com", ignoreCase = true) -> "Twitter / X"
+            extractedUrl.contains("facebook.com", ignoreCase = true) || extractedUrl.contains("fb.watch", ignoreCase = true) -> "Facebook"
+            else -> "Media"
+        }
+        loadingStatus = "Resolving $platformLabel streams..."
         isLoading = true
         coroutineScope.launch {
             try {
@@ -171,7 +181,7 @@ fun HomeScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Analyzing video stream...",
+                    text = loadingStatus,
                     color = SnaptubeTextSecondary,
                     fontSize = 13.sp
                 )
