@@ -1,4 +1,4 @@
-﻿package com.snaptube.downloader.core.download
+package com.snaptube.downloader.core.download
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,6 +17,7 @@ import com.snaptube.downloader.data.model.DownloadStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class DownloadService : Service() {
@@ -106,7 +107,7 @@ class DownloadService : Service() {
             DownloadHelper.downloadList.collect { list ->
                 val activeItems = list.filter { it.status == DownloadStatus.DOWNLOADING }
                 if (activeItems.isEmpty()) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopForeground(true)
                     stopSelf()
                 } else {
                     val firstActive = activeItems.first()
@@ -118,7 +119,7 @@ class DownloadService : Service() {
                     val text = buildString {
                         if (progress > 0) append("$progress%")
                         if (totalMb > 0) append(" ($downloadedMb / $totalMb MB)")
-                        if (firstActive.downloadSpeed.isNotBlank()) append(" • ${firstActive.downloadSpeed}")
+                        if (firstActive.downloadSpeed.isNotBlank()) append(" \u2022 ${firstActive.downloadSpeed}")
                     }.ifEmpty { "Downloading..." }
 
                     val notif = buildNotification(
@@ -181,7 +182,7 @@ class DownloadService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder.addAction(
-                android.R.drawable.ic_menu_close_clear_cancel,
+                0,
                 "Cancel",
                 cancelPendingIntent
             )
@@ -192,6 +193,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         observeJob?.cancel()
+        serviceScope.cancel()
         super.onDestroy()
     }
 }
