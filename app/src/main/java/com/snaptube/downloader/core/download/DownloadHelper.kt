@@ -6,6 +6,7 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import com.snaptube.downloader.core.extractor.VideoExtractorEngine
+import com.snaptube.downloader.core.storage.MediaDestination
 import com.snaptube.downloader.core.storage.StorageManager
 import com.snaptube.downloader.data.model.DownloadItem
 import com.snaptube.downloader.data.model.DownloadStatus
@@ -39,7 +40,7 @@ object DownloadHelper {
     private val activeMediaInfoCache = ConcurrentHashMap<Long, MediaInfo>()
     private val activeJobs = ConcurrentHashMap<Long, kotlinx.coroutines.Job>()
     private val activeCalls = ConcurrentHashMap<Long, okhttp3.Call>()
-    private val activeDestinations = ConcurrentHashMap<Long, StorageManager.MediaDestination>()
+    private val activeDestinations = ConcurrentHashMap<Long, MediaDestination>()
 
     // High throughput client with extended timeouts
     private val httpClient = OkHttpClient.Builder()
