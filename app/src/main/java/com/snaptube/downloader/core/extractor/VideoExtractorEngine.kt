@@ -534,7 +534,8 @@ object VideoExtractorEngine {
                     if (videoStreams != null) {
                         for (i in 0 until videoStreams.length()) {
                             val stream = videoStreams.optJSONObject(i) ?: continue
-                            val quality = stream.optString("quality", "").ifBlank { continue }
+                            val quality = stream.optString("quality", "")
+                            if (quality.isBlank()) continue
                             val streamUrl = stream.optString("url", "")
                             if (!isValidHttpUrl(streamUrl) || streamUrl.contains("odycdn.com")) continue
 
@@ -670,9 +671,9 @@ object VideoExtractorEngine {
                             if (mimeType.contains("video")) {
                                 if (!container.contains("mp4") && !mimeType.contains("mp4")) continue
                                 val quality = af.optString("qualityLabel", "").ifBlank {
-                                    af.optString("resolution", "").ifBlank { continue }
+                                    af.optString("resolution", "")
                                 }
-                                if (!seenVideoQualities.add(quality)) continue
+                                if (quality.isBlank() || !seenVideoQualities.add(quality)) continue
 
                                 val contentLength = af.optLong("clen", 0L)
                                 formatsList.add(
@@ -714,9 +715,9 @@ object VideoExtractorEngine {
                             if (!isValidHttpUrl(streamUrl)) continue
 
                             val quality = fs.optString("qualityLabel", "").ifBlank {
-                                fs.optString("resolution", "").ifBlank { continue }
+                                fs.optString("resolution", "")
                             }
-                            if (!seenVideoQualities.add(quality)) continue
+                            if (quality.isBlank() || !seenVideoQualities.add(quality)) continue
 
                             formatsList.add(
                                 MediaFormat(

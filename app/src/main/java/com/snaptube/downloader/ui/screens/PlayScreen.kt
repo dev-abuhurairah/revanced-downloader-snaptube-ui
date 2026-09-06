@@ -295,7 +295,7 @@ private fun DownloadCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 if (item.progress > 0) {
                     LinearProgressIndicator(
-                        progress = { item.progress / 100f },
+                        progress = item.progress / 100f,
                         modifier = Modifier.fillMaxWidth().height(3.dp),
                         color = SnaptubeYellow,
                         trackColor = SnaptubeBlack
