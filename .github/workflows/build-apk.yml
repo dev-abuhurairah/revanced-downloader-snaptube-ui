@@ -40,11 +40,29 @@ jobs:
 
       - name: Build with Gradle
         run: |
+          set -o pipefail
           if [ "${{ github.event.inputs.build_type }}" == "release" ]; then
-            ./gradlew assembleRelease --stacktrace
+            ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           else
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           fi
+
+      - name: Report Build Diagnostics on Failure
+        if: failure()
+        run: |
+          echo "## ❌ Gradle Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 100 gradle_build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Gradle Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: gradle_build.log
+          retention-days: 2
+
 
       - name: Locate & Rename APK
         id: locate_apk

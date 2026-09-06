@@ -92,22 +92,33 @@ class DownloadService : Service() {
         }
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun startForegroundWithInitialNotification() {
         val notification = buildNotification("VidSnap Downloader", "Preparing download...", 0, indeterminate = true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun observeDownloads() {
         observeJob?.cancel()
         observeJob = serviceScope.launch {
             DownloadHelper.downloadList.collect { list ->
                 val activeItems = list.filter { it.status == DownloadStatus.DOWNLOADING }
                 if (activeItems.isEmpty()) {
-                    stopForeground(true)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
                     stopSelf()
                 } else {
                     val firstActive = activeItems.first()
@@ -133,7 +144,11 @@ class DownloadService : Service() {
                     try {
                         val manager = NotificationManagerCompat.from(this@DownloadService)
                         manager.notify(NOTIFICATION_ID, notif)
-                    } catch (_: SecurityException) {}
+                    } catch (e: SecurityException) {
+                        e.printStackTrace()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                 }
             }
         }
@@ -156,7 +171,7 @@ class DownloadService : Service() {
         )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(contentIntent)
@@ -182,7 +197,7 @@ class DownloadService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder.addAction(
-                0,
+                android.R.drawable.ic_menu_close_clear_cancel,
                 "Cancel",
                 cancelPendingIntent
             )
