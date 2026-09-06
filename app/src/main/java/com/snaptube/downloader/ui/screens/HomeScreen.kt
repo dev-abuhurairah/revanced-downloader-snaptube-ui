@@ -70,14 +70,28 @@ fun HomeScreen(
             Toast.makeText(context, "Paste a link or enter search keywords", Toast.LENGTH_SHORT).show()
             return
         }
+
+        val extractedUrl = VideoExtractorEngine.extractUrlFromText(trimmed)
+        if (!VideoExtractorEngine.isValidHttpUrl(extractedUrl)) {
+            val encoded = runCatching { java.net.URLEncoder.encode(trimmed, "UTF-8") }.getOrDefault("video")
+            Toast.makeText(context, "Searching for: $trimmed", Toast.LENGTH_SHORT).show()
+            onOpenBrowser("https://m.youtube.com/results?search_query=$encoded")
+            return
+        }
+
         isLoading = true
         coroutineScope.launch {
             try {
-                val result = VideoExtractorEngine.resolveMedia(trimmed)
-                result.onSuccess { info ->
-                    resolvedMedia = info
-                }.onFailure { err ->
-                    Toast.makeText(context, "Could not extract video: ${err.message}", Toast.LENGTH_SHORT).show()
+                when (val result = VideoExtractorEngine.resolveMedia(extractedUrl)) {
+                    is com.snaptube.downloader.core.model.ResolveResult.Success -> {
+                        resolvedMedia = result.mediaInfo
+                    }
+                    is com.snaptube.downloader.core.model.ResolveResult.Failure -> {
+                        Toast.makeText(context, result.userMessage, Toast.LENGTH_LONG).show()
+                        if (result.errorType == com.snaptube.downloader.core.model.ResolveErrorType.RESOLVER_UNAVAILABLE) {
+                            onOpenBrowser(extractedUrl)
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
@@ -224,12 +238,7 @@ fun HomeScreen(
                 mediaInfo = media,
                 onFormatSelected = { format ->
                     try {
-                        if (format.directUrl != null) {
-                            DownloadHelper.startDownload(context, media, format)
-                        } else {
-                            Toast.makeText(context, "Opening in in-app browser to capture video stream...", Toast.LENGTH_SHORT).show()
-                            onOpenBrowser(media.sourceUrl)
-                        }
+                        DownloadHelper.startDownload(context, media, format)
                     } catch (t: Throwable) {
                         t.printStackTrace()
                         Toast.makeText(context, "Download error: ${t.message}", Toast.LENGTH_SHORT).show()

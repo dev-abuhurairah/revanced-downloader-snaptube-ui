@@ -1,17 +1,12 @@
 package com.snaptube.downloader.core.download
 
-import android.app.DownloadManager
-import android.content.ContentValues
 import android.content.Context
-import android.media.MediaScannerConnection
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
 import android.widget.Toast
 import com.snaptube.downloader.core.extractor.VideoExtractorEngine
+import com.snaptube.downloader.core.storage.MediaDestination
+import com.snaptube.downloader.core.storage.StorageManager
 import com.snaptube.downloader.data.model.DownloadItem
 import com.snaptube.downloader.data.model.DownloadStatus
 import com.snaptube.downloader.data.model.MediaFormat
@@ -26,9 +21,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.File
-import java.io.FileOutputStream
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 
 object DownloadHelper {
 
@@ -55,7 +52,7 @@ object DownloadHelper {
         try {
             val prefs = context.getSharedPreferences("vidsnap_downloads_prefs", Context.MODE_PRIVATE)
             val jsonString = prefs.getString("saved_downloads", null) ?: return
-            val jsonArray = org.json.JSONArray(jsonString)
+            val jsonArray = JSONArray(jsonString)
             val items = mutableListOf<DownloadItem>()
 
             for (i in 0 until jsonArray.length()) {
@@ -64,24 +61,24 @@ object DownloadHelper {
                 val mediaFormat = if (formatObj != null) {
                     MediaFormat(
                         formatId = formatObj.optString("formatId", "default"),
-                        resolutionOrQuality = formatObj.optString("resolutionOrQuality", "HD"),
+                        resolutionOrQuality = formatObj.optString("resolutionOrQuality", "Original"),
                         fileExtension = formatObj.optString("fileExtension", "mp4"),
-                        approxSize = formatObj.optString("approxSize").takeIf { it.isNotEmpty() },
+                        approxSize = formatObj.optString("approxSize").takeIf { it.isNotBlank() },
                         mediaType = runCatching {
-                            com.snaptube.downloader.data.model.MediaType.valueOf(formatObj.optString("mediaType", "VIDEO"))
-                        }.getOrDefault(com.snaptube.downloader.data.model.MediaType.VIDEO),
-                        directUrl = formatObj.optString("directUrl").takeIf { it.isNotEmpty() }
+                            MediaType.valueOf(formatObj.optString("mediaType", "VIDEO"))
+                        }.getOrDefault(MediaType.VIDEO),
+                        directUrl = formatObj.optString("directUrl").takeIf { it.isNotBlank() }
                     )
                 } else {
-                    MediaFormat("default", "HD", "mp4")
+                    MediaFormat("default", "Original", "mp4")
                 }
 
                 val statusStr = obj.optString("status", DownloadStatus.COMPLETED.name)
                 var status = runCatching { DownloadStatus.valueOf(statusStr) }.getOrDefault(DownloadStatus.COMPLETED)
-                val localPath = obj.optString("localFilePath").takeIf { it.isNotEmpty() }
+                val localPath = obj.optString("localFilePath").takeIf { it.isNotBlank() }
 
                 if (status == DownloadStatus.DOWNLOADING || status == DownloadStatus.PENDING) {
-                    if (localPath != null && File(localPath).exists() && File(localPath).length() > 50 * 1024) {
+                    if (StorageManager.isMediaAvailable(context, localPath)) {
                         status = DownloadStatus.COMPLETED
                     } else {
                         status = DownloadStatus.FAILED
@@ -114,10 +111,10 @@ object DownloadHelper {
         val ctx = appContext ?: return
         try {
             val prefs = ctx.getSharedPreferences("vidsnap_downloads_prefs", Context.MODE_PRIVATE)
-            val jsonArray = org.json.JSONArray()
+            val jsonArray = JSONArray()
             val snapshot = _downloadList.value.toList()
             snapshot.forEach { item ->
-                val obj = org.json.JSONObject().apply {
+                val obj = JSONObject().apply {
                     put("id", item.id)
                     put("title", item.title)
                     put("sourceUrl", item.sourceUrl)
@@ -129,7 +126,7 @@ object DownloadHelper {
                     put("status", item.status.name)
                     put("timestamp", item.timestamp)
 
-                    val formatObj = org.json.JSONObject().apply {
+                    val formatObj = JSONObject().apply {
                         put("formatId", item.format.formatId)
                         put("resolutionOrQuality", item.format.resolutionOrQuality)
                         put("fileExtension", item.format.fileExtension)
@@ -164,8 +161,14 @@ object DownloadHelper {
 
     fun startDownload(context: Context, mediaInfo: MediaInfo, format: MediaFormat) {
         init(context)
-        val downloadId = System.currentTimeMillis()
+        val downloadUrl = format.directUrl
 
+        if (downloadUrl.isNullOrBlank() || !VideoExtractorEngine.isValidHttpUrl(downloadUrl)) {
+            showToast(context, "Cannot download: Direct stream URL is unavailable or invalid.")
+            return
+        }
+
+        val downloadId = System.currentTimeMillis()
         val sanitizedTitle = sanitizeForFilename(mediaInfo.title)
             .take(45)
             .ifEmpty { "VidSnap_Video" }
@@ -174,12 +177,9 @@ object DownloadHelper {
             .take(20)
             .ifEmpty { "HD" }
 
-        val sanitizedExt = sanitizeForFilename(format.fileExtension)
-            .ifEmpty { "mp4" }
-
+        val sanitizedExt = sanitizeForFilename(format.fileExtension).ifEmpty { "mp4" }
         val fileName = "${sanitizedTitle}_${sanitizedQuality}.${sanitizedExt}"
 
-        // Initial task entry
         val initialItem = DownloadItem(
             id = downloadId,
             title = mediaInfo.title,
@@ -197,123 +197,72 @@ object DownloadHelper {
 
         coroutineScope.launch {
             try {
-                // Step 1: Ensure we have a valid, direct video stream URL
-                var directUrl = format.directUrl
-                if (directUrl.isNullOrEmpty() || directUrl == mediaInfo.sourceUrl) {
-                    // Resolve stream on demand
-                    val resolved = VideoExtractorEngine.resolveMedia(mediaInfo.sourceUrl)
-                    resolved.onSuccess { info ->
-                        val matching = info.formats.firstOrNull { it.formatId == format.formatId }
-                            ?: info.formats.firstOrNull { it.directUrl != null }
-                        if (matching?.directUrl != null) {
-                            directUrl = matching.directUrl
-                        }
-                    }
-                }
+                val success = executeStreamingDownload(
+                    context = context,
+                    downloadId = downloadId,
+                    streamUrl = downloadUrl,
+                    sourceReferer = mediaInfo.sourceUrl,
+                    fileName = fileName,
+                    isAudio = format.mediaType == MediaType.AUDIO
+                )
 
-                val finalStreamUrl = directUrl
-
-                if (finalStreamUrl.isNullOrEmpty() || (!finalStreamUrl.startsWith("http://", true) && !finalStreamUrl.startsWith("https://", true))) {
-                    // If stream resolution is not direct, attempt system download manager
-                    launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
-                    return@launch
-                }
-
-                // Step 2: Download directly using MediaStore (Android 10+) or OkHttp File (Legacy)
-                var success = false
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    success = downloadWithMediaStore(context, downloadId, finalStreamUrl, mediaInfo, format, fileName)
-                }
                 if (!success) {
-                    success = downloadWithOkHttp(context, downloadId, finalStreamUrl, mediaInfo, fileName)
+                    markDownloadFailed(downloadId)
                 }
-                if (!success) {
-                    // Fallback to system DownloadManager
-                    launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
-                }
+            } catch (c: CancellationException) {
+                markDownloadFailed(downloadId)
+                throw c
             } catch (t: Throwable) {
                 t.printStackTrace()
-                launchSystemDownloadManager(context, downloadId, mediaInfo, format, fileName)
+                markDownloadFailed(downloadId)
+                showToast(context, "Download failed: ${t.localizedMessage ?: "Network error"}")
             }
         }
     }
 
-    private suspend fun downloadWithMediaStore(
+    private suspend fun executeStreamingDownload(
         context: Context,
         downloadId: Long,
         streamUrl: String,
-        mediaInfo: MediaInfo,
-        format: MediaFormat,
-        fileName: String
+        sourceReferer: String,
+        fileName: String,
+        isAudio: Boolean
     ): Boolean = withContext(Dispatchers.IO) {
-        val resolver = context.contentResolver
-        var contentUri: Uri? = null
+        val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
+        val destination = StorageManager.createMediaDestination(context, fileName, mimeType, isAudio)
+            ?: return@withContext false
+
+        val reqBuilder = Request.Builder().url(streamUrl)
+        reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
+        val cleanReferer = sanitizeHeaderValue(sourceReferer)
+        if (cleanReferer != null) {
+            reqBuilder.addHeader("Referer", cleanReferer)
+        }
+        reqBuilder.addHeader("Accept", "*/*")
+        val request = reqBuilder.build()
 
         try {
-            val isAudio = format.mediaType == MediaType.AUDIO
-            val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
-
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val relativePath = if (isAudio) {
-                        Environment.DIRECTORY_MUSIC + "/VidSnap"
-                    } else {
-                        Environment.DIRECTORY_MOVIES + "/VidSnap"
-                    }
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }
-            }
-
-            val collectionUri = if (isAudio) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                }
-            } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                }
-            }
-
-            contentUri = resolver.insert(collectionUri, values)
-                ?: return@withContext false
-
-            val reqBuilder = Request.Builder().url(streamUrl)
-            reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
-            val cleanReferer = sanitizeHeaderValue(mediaInfo.sourceUrl)
-            if (cleanReferer != null) {
-                reqBuilder.addHeader("Referer", cleanReferer)
-            }
-            reqBuilder.addHeader("Accept", "*/*")
-            val request = reqBuilder.build()
-
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
-                resolver.delete(contentUri, null, null)
+                StorageManager.discardMediaDestination(context, destination)
                 return@withContext false
             }
 
             val contentType = response.header("Content-Type")?.lowercase().orEmpty()
             if (contentType.contains("text/html") || contentType.contains("text/plain")) {
-                resolver.delete(contentUri, null, null)
-                showToast(context, "Link returned a web page. Open in-app browser to capture real video!")
+                StorageManager.discardMediaDestination(context, destination)
+                showToast(context, "Link returned a web page instead of media stream.")
                 return@withContext false
             }
 
             val body = response.body ?: run {
-                resolver.delete(contentUri, null, null)
+                StorageManager.discardMediaDestination(context, destination)
                 return@withContext false
             }
             val contentLength = body.contentLength()
 
-            val outputStream = resolver.openOutputStream(contentUri) ?: run {
-                resolver.delete(contentUri, null, null)
+            val outputStream = StorageManager.openOutputStream(context, destination) ?: run {
+                StorageManager.discardMediaDestination(context, destination)
                 return@withContext false
             }
             val inputStream = body.byteStream()
@@ -331,7 +280,7 @@ object DownloadHelper {
 
                         if (contentLength > 0) {
                             val currentProgress = ((totalRead * 100) / contentLength).toInt().coerceIn(0, 99)
-                            if (currentProgress > lastProgress + 2) {
+                            if (currentProgress > lastProgress + 1) {
                                 lastProgress = currentProgress
                                 updateProgress(downloadId, currentProgress, totalRead, contentLength)
                             }
@@ -341,31 +290,26 @@ object DownloadHelper {
                 }
             }
 
-            // Verify size > 50 KB
-            if (totalRead < 50 * 1024) {
-                resolver.delete(contentUri, null, null)
-                _downloadList.value = _downloadList.value.map {
-                    if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
-                }
-                persistDownloads()
-                showToast(context, "Download failed: Incomplete video stream.")
+            // Minimum valid media verification (> 30 KB)
+            if (totalRead < 30 * 1024) {
+                StorageManager.discardMediaDestination(context, destination)
+                showToast(context, "Download failed: Incomplete stream data received.")
                 return@withContext false
             }
 
-            // Publish by setting IS_PENDING = 0
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                values.clear()
-                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(contentUri, values, null, null)
+            val committed = StorageManager.commitMediaDestination(context, destination)
+            if (!committed) {
+                StorageManager.discardMediaDestination(context, destination)
+                return@withContext false
             }
 
-            // Update state with content URI
+            // Update state with completed status and actual local identifier
             _downloadList.value = _downloadList.value.map {
                 if (it.id == downloadId) {
                     it.copy(
                         progress = 100,
                         status = DownloadStatus.COMPLETED,
-                        localFilePath = contentUri.toString(),
+                        localFilePath = destination.identifier,
                         downloadedBytes = totalRead,
                         totalBytes = totalRead
                     )
@@ -373,181 +317,21 @@ object DownloadHelper {
             }
             persistDownloads()
 
-            showToast(context, "Saved to Gallery: $fileName")
-            true
-        } catch (t: Throwable) {
-            t.printStackTrace()
-            contentUri?.let { uri ->
-                runCatching { resolver.delete(uri, null, null) }
-            }
-            false
-        }
-    }
-
-    private suspend fun downloadWithOkHttp(
-        context: Context,
-        downloadId: Long,
-        streamUrl: String,
-        mediaInfo: MediaInfo,
-        fileName: String
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Target storage directory (accessible without runtime permission dialogs)
-            val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                ?: context.filesDir
-            if (!downloadDir.exists()) downloadDir.mkdirs()
-
-            val targetFile = File(downloadDir, fileName)
-
-            val reqBuilder = Request.Builder().url(streamUrl)
-            reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
-            val cleanReferer = sanitizeHeaderValue(mediaInfo.sourceUrl)
-            if (cleanReferer != null) {
-                reqBuilder.addHeader("Referer", cleanReferer)
-            }
-            reqBuilder.addHeader("Accept", "*/*")
-            val request = reqBuilder.build()
-
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                return@withContext false
-            }
-
-            val contentType = response.header("Content-Type")?.lowercase().orEmpty()
-            if (contentType.contains("text/html") || contentType.contains("text/plain")) {
-                showToast(context, "Link returned a web page. Open in-app browser to capture real video!")
-                return@withContext false
-            }
-
-            val body = response.body ?: return@withContext false
-            val contentLength = body.contentLength()
-
-            val inputStream = body.byteStream()
-            val outputStream = FileOutputStream(targetFile)
-
-            val buffer = ByteArray(8192)
-            var bytesRead: Int
-            var totalRead = 0L
-            var lastProgress = 0
-
-            outputStream.use { out ->
-                inputStream.use { input ->
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        out.write(buffer, 0, bytesRead)
-                        totalRead += bytesRead
-
-                        if (contentLength > 0) {
-                            val currentProgress = ((totalRead * 100) / contentLength).toInt().coerceIn(0, 99)
-                            if (currentProgress > lastProgress + 2) {
-                                lastProgress = currentProgress
-                                updateProgress(downloadId, currentProgress, totalRead, contentLength)
-                            }
-                        }
-                    }
-                    out.flush()
-                }
-            }
-
-            // A valid video is never less than 50 KB
-            if (totalRead < 50 * 1024) {
-                targetFile.delete()
-                _downloadList.value = _downloadList.value.map {
-                    if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
-                }
-                persistDownloads()
-                showToast(context, "Download failed: Incomplete or empty video stream.")
-                return@withContext false
-            }
-
-            // Successfully downloaded! Copy to public Downloads if possible
-            copyToPublicDownloads(targetFile, fileName)
-
-            // Notify Android MediaScanner so it appears in Gallery
-            MediaScannerConnection.scanFile(
-                context,
-                arrayOf(targetFile.absolutePath),
-                null
-            ) { _, _ -> }
-
-            // Mark completed
-            _downloadList.value = _downloadList.value.map {
-                if (it.id == downloadId) {
-                    it.copy(
-                        progress = 100,
-                        status = DownloadStatus.COMPLETED,
-                        localFilePath = targetFile.absolutePath,
-                        downloadedBytes = targetFile.length(),
-                        totalBytes = targetFile.length()
-                    )
-                } else it
-            }
-            persistDownloads()
-
-            showToast(context, "Downloaded successfully: $fileName")
+            showToast(context, "Saved successfully: $fileName")
             true
         } catch (e: Exception) {
+            StorageManager.discardMediaDestination(context, destination)
+            if (e is CancellationException) throw e
             e.printStackTrace()
             false
         }
     }
 
-    private fun launchSystemDownloadManager(
-        context: Context,
-        downloadId: Long,
-        mediaInfo: MediaInfo,
-        format: MediaFormat,
-        fileName: String
-    ) {
-        try {
-            val downloadUrl = format.directUrl ?: mediaInfo.sourceUrl
-            if (!downloadUrl.startsWith("http://", ignoreCase = true) && !downloadUrl.startsWith("https://", ignoreCase = true)) {
-                throw IllegalArgumentException("Invalid download URL: $downloadUrl")
-            }
-
-            val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
-                setTitle(mediaInfo.title.take(60))
-                setDescription("Downloading with VidSnap (${format.resolutionOrQuality.take(30)})")
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                addRequestHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
-                val cleanReferer = sanitizeHeaderValue(mediaInfo.sourceUrl)
-                if (cleanReferer != null) {
-                    addRequestHeader("Referer", cleanReferer)
-                }
-                setAllowedOverMetered(true)
-                setAllowedOverRoaming(true)
-                try {
-                    setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                } catch (_: Throwable) {}
-            }
-
-            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
-                ?: throw IllegalStateException("DownloadManager service not available")
-            manager.enqueue(request)
-
-            _downloadList.value = _downloadList.value.map {
-                if (it.id == downloadId) {
-                    it.copy(progress = 50, status = DownloadStatus.DOWNLOADING)
-                } else it
-            }
-        } catch (e: Throwable) {
-            e.printStackTrace()
-            _downloadList.value = _downloadList.value.map {
-                if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
-            }
-            persistDownloads()
-            showToast(context, "Download failed: ${e.message}")
+    private fun markDownloadFailed(downloadId: Long) {
+        _downloadList.value = _downloadList.value.map {
+            if (it.id == downloadId) it.copy(status = DownloadStatus.FAILED) else it
         }
-    }
-
-    private fun copyToPublicDownloads(sourceFile: File, fileName: String) {
-        try {
-            val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "VidSnap")
-            if (!publicDir.exists()) publicDir.mkdirs()
-            val destFile = File(publicDir, fileName)
-            sourceFile.copyTo(destFile, overwrite = true)
-        } catch (_: Throwable) {
-            // Silently fall back to app external files dir
-        }
+        persistDownloads()
     }
 
     private fun updateProgress(downloadId: Long, progress: Int, downloaded: Long, total: Long) {
@@ -564,6 +348,11 @@ object DownloadHelper {
     }
 
     fun removeDownload(id: Long) {
+        val target = _downloadList.value.firstOrNull { it.id == id }
+        val ctx = appContext
+        if (target != null && ctx != null) {
+            StorageManager.deleteMedia(ctx, target.localFilePath)
+        }
         _downloadList.value = _downloadList.value.filter { it.id != id }
         persistDownloads()
     }

@@ -6,6 +6,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.snaptube.downloader.core.download.DownloadHelper
 import com.snaptube.downloader.core.extractor.VideoExtractorEngine
+import com.snaptube.downloader.core.model.ResolveResult
 import com.snaptube.downloader.data.model.MediaInfo
 import com.snaptube.downloader.ui.components.DownloadBottomSheet
 import com.snaptube.downloader.ui.theme.SnaptubeBlack
@@ -94,8 +97,13 @@ fun BrowserScreen(
                 directStreamUrl = detectedStreamUrl
             )
             isResolving = false
-            res.onSuccess { info ->
-                resolvedMedia = info
+            when (res) {
+                is ResolveResult.Success -> {
+                    resolvedMedia = res.mediaInfo
+                }
+                is ResolveResult.Failure -> {
+                    Toast.makeText(context, res.userMessage, Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -106,11 +114,12 @@ fun BrowserScreen(
             .background(SnaptubeBlack)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Browser Address & Action Bar
+            // Browser Address & Action Bar with statusBarsPadding for edge-to-edge support
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(SnaptubeBlack)
+                    .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
