@@ -10,13 +10,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -38,52 +36,78 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.snaptube.downloader.R
 import com.snaptube.downloader.ui.theme.SnaptubeBlack
-import com.snaptube.downloader.ui.theme.SnaptubeCard
-import com.snaptube.downloader.ui.theme.SnaptubeTextSecondary
+import com.snaptube.downloader.ui.theme.SnaptubeOrange
 import com.snaptube.downloader.ui.theme.SnaptubeYellow
 import kotlinx.coroutines.delay
 
+/**
+ * Snaptube-Inspired Branded Splash Opening Screen
+ *
+ * Exact 1:1 layout matching Snaptube's iconic opening screen:
+ * - Minimalist, distraction-free matte dark background (#171717)
+ * - Dead-center: Snaptube-style yellow circle with white TV screen and orange-red download arrow
+ * - Bottom: Bold, heavy yellow brand typography ("VidSnap")
+ * - Dynamic physics animations: Spring pop entrance, cascading downward arrow pulse, smooth slide-up
+ */
 @Composable
 fun SplashScreen(
     onSplashFinished: () -> Unit
 ) {
-    val scaleAnim = remember { Animatable(0.4f) }
-    val alphaAnim = remember { Animatable(0f) }
-    val textAlphaAnim = remember { Animatable(0f) }
-    val textOffsetAnim = remember { Animatable(25f) }
+    // Logo entrance animations
+    val logoScale = remember { Animatable(0.35f) }
+    val logoAlpha = remember { Animatable(0f) }
 
-    // Pulsing halo glow effect
-    val infiniteTransition = rememberInfiniteTransition(label = "halo_glow")
-    val haloPulse by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.25f,
+    // Bottom brand text animations
+    val textAlpha = remember { Animatable(0f) }
+    val textOffset = remember { Animatable(20f) }
+
+    // Arrow animated download pulse
+    val arrowDropAnim = remember { Animatable(-10f) }
+
+    // Subtle ambient breathing after pop-in
+    val infiniteTransition = rememberInfiniteTransition(label = "splash_infinite")
+    val subtlePulse by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.03f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "halo_pulse"
+        label = "subtle_pulse"
     )
-    val haloAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.12f,
-        targetValue = 0.35f,
+
+    // Micro downward arrow nudge (mimicking active download motion)
+    val arrowNudge by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 2.5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = LinearEasing),
+            animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "halo_alpha"
+        label = "arrow_nudge"
     )
+
+    // Sequence of animations
+    LaunchedEffect(Unit) {
+        // 1. Logo pop-in with spring physics
+        logoAlpha.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 400, easing = LinearEasing)
+        )
+    }
 
     LaunchedEffect(Unit) {
-        // Logo bounce entrance
-        scaleAnim.animateTo(
+        // Bouncy spring entrance for central logo
+        logoScale.animateTo(
             targetValue = 1f,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -93,21 +117,8 @@ fun SplashScreen(
     }
 
     LaunchedEffect(Unit) {
-        // Logo fade in
-        alphaAnim.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
-        )
-        // Title and tagline smooth slide up
-        textAlphaAnim.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        delay(200)
-        textOffsetAnim.animateTo(
+        // Arrow smooth slide down into place
+        arrowDropAnim.animateTo(
             targetValue = 0f,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioLowBouncy,
@@ -116,9 +127,29 @@ fun SplashScreen(
         )
     }
 
+    LaunchedEffect(Unit) {
+        // 2. Bottom brand name fades in and slides up
+        delay(250)
+        textAlpha.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing)
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        delay(250)
+        textOffset.animateTo(
+            targetValue = 0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        )
+    }
+
     // Keep splash visible for Snaptube-like branded entrance (~1.8 seconds)
     LaunchedEffect(Unit) {
-        delay(1900)
+        delay(1850)
         onSplashFinished()
     }
 
@@ -130,185 +161,103 @@ fun SplashScreen(
             .navigationBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
-        // Central Logo & Brand Branding
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        // 1. Centered Iconic Snaptube-Inspired Logo
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(150.dp)
+                .scale(logoScale.value * subtlePulse)
+                .alpha(logoAlpha.value)
         ) {
+            // Outer Vibrant Golden-Yellow Circle
             Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(170.dp)
+                modifier = Modifier
+                    .size(146.dp)
+                    .clip(CircleShape)
+                    .background(SnaptubeYellow),
+                contentAlignment = Alignment.Center
             ) {
-                // Outer Golden Pulsing Ambient Glow
+                // White Video Screen / Monitor with Smooth Rounded Corners
                 Box(
                     modifier = Modifier
-                        .size(140.dp)
-                        .scale(haloPulse)
-                        .alpha(haloAlpha)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    SnaptubeYellow,
-                                    SnaptubeYellow.copy(alpha = 0.5f),
-                                    Color.Transparent
-                                )
-                            )
-                        )
-                )
-
-                // Snaptube/VidSnap Rounded Squircle Badge
-                Box(
-                    modifier = Modifier
-                        .size(112.dp)
-                        .scale(scaleAnim.value)
-                        .alpha(alphaAnim.value)
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFF262632),
-                                    Color(0xFF16161D),
-                                    Color(0xFF0D0D11)
-                                )
-                            )
-                        )
-                        .border(
-                            width = 2.dp,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    SnaptubeYellow,
-                                    Color(0xFFFFB300),
-                                    SnaptubeYellow.copy(alpha = 0.3f)
-                                )
-                            ),
-                            shape = RoundedCornerShape(32.dp)
-                        ),
+                        .size(width = 86.dp, height = 54.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.White),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                        contentDescription = "VidSnap Logo",
+                    // Download Graphic in Vivid Orange-Red
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                         modifier = Modifier
-                            .size(90.dp)
-                            .padding(4.dp)
-                    )
+                            .offset(y = (arrowDropAnim.value + arrowNudge).dp)
+                    ) {
+                        // Top Horizontal Bar
+                        Box(
+                            modifier = Modifier
+                                .size(width = 22.dp, height = 4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(SnaptubeOrange)
+                        )
+
+                        Spacer(modifier = Modifier.height(3.dp))
+
+                        // Middle Horizontal Bar
+                        Box(
+                            modifier = Modifier
+                                .size(width = 22.dp, height = 4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(SnaptubeOrange)
+                        )
+
+                        Spacer(modifier = Modifier.height(3.dp))
+
+                        // Downward Pointing Arrow (Stem + Triangle Head)
+                        Canvas(modifier = Modifier.size(width = 26.dp, height = 15.dp)) {
+                            val w = size.width
+                            val h = size.height
+                            val stemWidth = w * 0.46f
+                            val stemHeight = h * 0.42f
+                            val stemLeft = (w - stemWidth) / 2f
+                            val stemRight = stemLeft + stemWidth
+
+                            val arrowPath = Path().apply {
+                                // Stem
+                                moveTo(stemLeft, 0f)
+                                lineTo(stemRight, 0f)
+                                lineTo(stemRight, stemHeight)
+                                // Right wing of triangle
+                                lineTo(w, stemHeight)
+                                // Arrow bottom point
+                                lineTo(w / 2f, h)
+                                // Left wing of triangle
+                                lineTo(0f, stemHeight)
+                                lineTo(stemLeft, stemHeight)
+                                close()
+                            }
+                            drawPath(path = arrowPath, color = SnaptubeOrange)
+                        }
+                    }
                 }
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Brand Typography
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .offset(y = textOffsetAnim.value.dp)
-                    .alpha(textAlphaAnim.value)
-            ) {
-                Text(
-                    text = "VidSnap",
-                    color = SnaptubeYellow,
-                    fontSize = 38.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = (-0.5).sp
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "HD Video & Music Downloader",
-                    color = SnaptubeTextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.5.sp
-                )
-            }
         }
 
-        // Bottom Animated Dots & Developer Attribution
-        Column(
+        // 2. Bottom Brand Typography: Bold Heavy Yellow "VidSnap"
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 36.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(bottom = 76.dp)
+                .offset(y = textOffset.value.dp)
+                .alpha(textAlpha.value)
         ) {
-            // Three glowing loading dots
-            AnimatedLoadingDots()
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SnaptubeCard.copy(alpha = 0.45f))
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = "⚡ Built with ❤️ by dev-abuhurairah",
-                    color = SnaptubeTextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
+            Text(
+                text = stringResource(id = R.string.app_name),
+                color = SnaptubeYellow,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-0.5).sp,
+                textAlign = TextAlign.Center
+            )
         }
-    }
-}
-
-@Composable
-private fun AnimatedLoadingDots() {
-    val infiniteTransition = rememberInfiniteTransition(label = "dots_transition")
-    val dot1Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dot1"
-    )
-    val dot2Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600, delayMillis = 200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dot2"
-    )
-    val dot3Alpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600, delayMillis = 400, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dot3"
-    )
-
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .alpha(dot1Alpha)
-                .clip(CircleShape)
-                .background(SnaptubeYellow)
-        )
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .alpha(dot2Alpha)
-                .clip(CircleShape)
-                .background(SnaptubeYellow)
-        )
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .alpha(dot3Alpha)
-                .clip(CircleShape)
-                .background(SnaptubeYellow)
-        )
     }
 }

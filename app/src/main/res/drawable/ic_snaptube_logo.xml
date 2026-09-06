@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Snaptube-Inspired Golden-Yellow Circle Container -->
+    <path
+        android:fillColor="#F2B015"
+        android:pathData="M100,24 C141.97,24 176,58.03 176,100 C176,141.97 141.97,176 100,176 C58.03,176 24,141.97 24,100 C24,58.03 58.03,24 100,24 Z" />
+
+    <!-- White Video Screen / Monitor with Smooth Rounded Corners -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M70,70 L130,70 C139.94,70 148,78.06 148,88 L148,112 C148,121.94 139.94,130 130,130 L70,130 C60.06,130 52,121.94 52,112 L52,88 C52,78.06 60.06,70 70,70 Z" />
+
+    <!-- Download Graphic in Vivid Orange-Red -->
+    <!-- Top Horizontal Bar -->
+    <path
+        android:fillColor="#F46013"
+        android:pathData="M88.5,80 L111.5,80 C112.88,80 114,81.12 114,82.5 C114,83.88 112.88,85 111.5,85 L88.5,85 C87.12,85 86,83.88 86,82.5 C86,81.12 87.12,80 88.5,80 Z" />
+
+    <!-- Middle Horizontal Bar -->
+    <path
+        android:fillColor="#F46013"
+        android:pathData="M88.5,88.5 L111.5,88.5 C112.88,88.5 114,89.62 114,91 C114,92.38 112.88,93.5 111.5,93.5 L88.5,93.5 C87.12,93.5 86,92.38 86,91 C86,89.62 87.12,88.5 88.5,88.5 Z" />
+
+    <!-- Downward Arrow (Stem + Triangular Head) -->
+    <path
+        android:fillColor="#F46013"
+        android:pathData="M92,97 L108,97 L108,104 L118,104 L100,121 L82,104 L92,104 Z" />
+</vector>

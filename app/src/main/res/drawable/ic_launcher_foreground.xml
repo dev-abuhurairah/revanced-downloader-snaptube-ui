@@ -1,129 +1,32 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Outer Ambient Glow -->
+    <!-- Snaptube-Inspired Golden-Yellow Circle Container -->
     <path
-        android:pathData="M54,14 C76.5,14 94,31.5 94,54 C94,76.5 76.5,94 54,94 C31.5,94 14,76.5 14,54 C14,31.5 31.5,14 54,14 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="54"
-                android:startY="14"
-                android:endX="54"
-                android:endY="94"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#33FFCC00" />
-                <item android:offset="1.0" android:color="#00111115" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        android:fillColor="#F2B015"
+        android:pathData="M54,21 C72.22,21 87,35.78 87,54 C87,72.22 72.22,87 54,87 C35.78,87 21,72.22 21,54 C21,35.78 35.78,21 54,21 Z" />
 
-    <!-- Base Squircle Container - Premium Dark Graphite -->
+    <!-- White Video Screen / Monitor with Smooth Rounded Corners -->
     <path
-        android:pathData="M54,18 C74,18 90,34 90,54 C90,74 74,90 54,90 C34,90 18,74 18,54 C18,34 34,18 54,18 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="18"
-                android:startY="18"
-                android:endX="90"
-                android:endY="90"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#282834" />
-                <item android:offset="0.5" android:color="#1A1A22" />
-                <item android:offset="1.0" android:color="#101014" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        android:fillColor="#FFFFFF"
+        android:pathData="M43,41 L65,41 C69.42,41 73,44.58 73,49 L73,59 C73,63.42 69.42,67 65,67 L43,67 C38.58,67 35,63.42 35,59 L35,49 C35,44.58 38.58,41 43,41 Z" />
 
-    <!-- Sleek Golden Neon Perimeter Ring -->
+    <!-- Download Graphic in Vivid Orange-Red -->
+    <!-- Top Horizontal Bar -->
     <path
-        android:pathData="M54,19 C73.5,19 89,34.5 89,54 C89,73.5 73.5,89 54,89 C34.5,89 19,73.5 19,54 C19,34.5 34.5,19 54,19 Z"
-        android:strokeWidth="1.8">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="20"
-                android:startY="20"
-                android:endX="88"
-                android:endY="88"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FFF380" />
-                <item android:offset="0.45" android:color="#FFC107" />
-                <item android:offset="1.0" android:color="#FF8F00" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        android:fillColor="#F46013"
+        android:pathData="M50,45.5 L58,45.5 C58.55,45.5 59,45.95 59,46.5 C59,47.05 58.55,47.5 58,47.5 L50,47.5 C49.45,47.5 49,47.05 49,46.5 C49,45.95 49.45,45.5 50,45.5 Z" />
 
-    <!-- Modern Stylized Dynamic 'V' Monogram + Fast Downloader -->
-    <!-- Left Wing of Monogram -->
+    <!-- Middle Horizontal Bar -->
     <path
-        android:pathData="M31,34 L43,34 L54,58 L46,63 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="31"
-                android:startY="34"
-                android:endX="54"
-                android:endY="63"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FFF9C4" />
-                <item android:offset="0.6" android:color="#FFD54F" />
-                <item android:offset="1.0" android:color="#FFA000" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        android:fillColor="#F46013"
+        android:pathData="M50,49.5 L58,49.5 C58.55,49.5 59,49.95 59,50.5 C59,51.05 58.55,51.5 58,51.5 L50,51.5 C49.45,51.5 49,51.05 49,50.5 C49,49.95 49.45,49.5 50,49.5 Z" />
 
-    <!-- Right Wing of Monogram -->
+    <!-- Downward Arrow (Stem + Triangular Head) -->
     <path
-        android:pathData="M77,34 L65,34 L54,58 L62,63 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="77"
-                android:startY="34"
-                android:endX="54"
-                android:endY="63"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FFCA28" />
-                <item android:offset="0.7" android:color="#FF8F00" />
-                <item android:offset="1.0" android:color="#E65100" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Central Precision Downward Download Arrow -->
-    <path
-        android:pathData="M51,28 L57,28 L57,53 L66,53 L54,68 L42,53 L51,53 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="54"
-                android:startY="28"
-                android:endX="54"
-                android:endY="68"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FFFFFF" />
-                <item android:offset="0.3" android:color="#FFF8E1" />
-                <item android:offset="0.75" android:color="#FFD54F" />
-                <item android:offset="1.0" android:color="#FFB300" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Modern Streamlined Bottom Cradle Bar -->
-    <path
-        android:pathData="M40,73 C40,71.9 40.9,71 42,71 L66,71 C67.1,71 68,71.9 68,73 C68,74.1 67.1,75 66,75 L42,75 C40.9,75 40,74.1 40,73 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="40"
-                android:startY="73"
-                android:endX="68"
-                android:endY="73"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FFD54F" />
-                <item android:offset="0.5" android:color="#FFE082" />
-                <item android:offset="1.0" android:color="#FFB300" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
+        android:fillColor="#F46013"
+        android:pathData="M51,53.5 L57,53.5 L57,56.5 L61,56.5 L54,63.5 L47,56.5 L51,56.5 Z" />
 </vector>

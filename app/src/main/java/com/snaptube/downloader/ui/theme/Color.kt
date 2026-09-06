@@ -2,11 +2,12 @@ package com.snaptube.downloader.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val SnaptubeYellow = Color(0xFFFFCC00)
-val SnaptubeYellowDark = Color(0xFFE5B800)
-val SnaptubeBlack = Color(0xFF0D0D0E)
-val SnaptubeSurface = Color(0xFF18181A)
-val SnaptubeCard = Color(0xFF222226)
+val SnaptubeYellow = Color(0xFFF2B015)
+val SnaptubeYellowDark = Color(0xFFDDA010)
+val SnaptubeOrange = Color(0xFFF46013)
+val SnaptubeBlack = Color(0xFF171717)
+val SnaptubeSurface = Color(0xFF1F1F1F)
+val SnaptubeCard = Color(0xFF242426)
 val SnaptubeSearchBg = Color(0xFF1A1A1E)
 val SnaptubeSearchBorder = Color(0xFF2C2C30)
 val SnaptubeTextPrimary = Color(0xFFFFFFFF)
