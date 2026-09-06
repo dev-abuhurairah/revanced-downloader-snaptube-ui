@@ -37,6 +37,9 @@ object DownloadHelper {
     private var appContext: Context? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO)
     private val activeMediaInfoCache = ConcurrentHashMap<Long, MediaInfo>()
+    private val activeJobs = ConcurrentHashMap<Long, kotlinx.coroutines.Job>()
+    private val activeCalls = ConcurrentHashMap<Long, okhttp3.Call>()
+    private val activeDestinations = ConcurrentHashMap<Long, StorageManager.MediaDestination>()
 
     // High throughput client with extended timeouts
     private val httpClient = OkHttpClient.Builder()
@@ -207,7 +210,8 @@ object DownloadHelper {
         persistDownloads()
         showToast(context, "Starting download: $fileName")
 
-        coroutineScope.launch {
+        DownloadService.start(context, downloadId)
+        val job = coroutineScope.launch {
             try {
                 val success = executeStreamingDownload(
                     context = context,
@@ -243,8 +247,11 @@ object DownloadHelper {
                 Log.e(TAG, "Download failed with exception", t)
                 markDownloadFailed(downloadId, t.localizedMessage ?: "Network error")
                 showToast(context, "Download failed: ${t.localizedMessage ?: "Network error"}")
+            } finally {
+                activeJobs.remove(downloadId)
             }
         }
+        activeJobs[downloadId] = job
     }
 
     fun retryDownload(context: Context, downloadId: Long) {
@@ -265,45 +272,83 @@ object DownloadHelper {
             if (it.id == downloadId) it.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = "", downloadSpeed = "Connecting...") else it
         }
 
-        coroutineScope.launch {
-            // First attempt to re-resolve if direct URL is expired
-            var directUrl = item.format.directUrl
-            if (directUrl.isNullOrBlank()) {
-                val res = VideoExtractorEngine.resolveMedia(item.sourceUrl)
-                if (res is com.snaptube.downloader.core.model.ResolveResult.Success) {
-                    val matching = res.mediaInfo.formats.firstOrNull { it.mediaType == item.format.mediaType }
-                        ?: res.mediaInfo.formats.firstOrNull()
-                    if (matching != null) {
-                        directUrl = matching.directUrl
+        DownloadService.start(context, downloadId)
+        val job = coroutineScope.launch {
+            try {
+                // Re-resolve if direct URL is missing or expired
+                var directUrl = item.format.directUrl
+                val isExpired = directUrl.isNullOrBlank() || VideoExtractorEngine.isYouTubeUrlExpired(directUrl)
+                if (isExpired) {
+                    updateSpeed(downloadId, "Refreshing link...")
+                    val res = VideoExtractorEngine.resolveMedia(item.sourceUrl)
+                    if (res is com.snaptube.downloader.core.model.ResolveResult.Success) {
+                        val matching = res.mediaInfo.formats.firstOrNull {
+                            it.mediaType == item.format.mediaType && it.resolutionOrQuality == item.format.resolutionOrQuality
+                        } ?: res.mediaInfo.formats.firstOrNull { it.mediaType == item.format.mediaType }
+                          ?: res.mediaInfo.formats.firstOrNull()
+
+                        if (matching != null && !matching.directUrl.isNullOrBlank()) {
+                            directUrl = matching.directUrl
+                            _downloadList.value = _downloadList.value.map {
+                                if (it.id == downloadId) it.copy(format = matching) else it
+                            }
+                        }
                     }
                 }
-            }
 
-            if (directUrl.isNullOrBlank()) {
-                markDownloadFailed(downloadId, "Could not refresh stream link.")
-                showToast(context, "Could not refresh stream link. Please copy link again.")
-                return@launch
-            }
+                if (directUrl.isNullOrBlank()) {
+                    markDownloadFailed(downloadId, "Could not refresh stream link.")
+                    showToast(context, "Could not refresh stream link. Please copy link again.")
+                    return@launch
+                }
 
-            val sanitizedTitle = sanitizeForFilename(item.title).take(45).ifEmpty { "VidSnap_Video" }
-            val sanitizedQuality = sanitizeForFilename(item.format.resolutionOrQuality).take(20).ifEmpty { "HD" }
-            val sanitizedExt = sanitizeForFilename(item.format.fileExtension).ifEmpty { "mp4" }
-            val fileName = "${sanitizedTitle}_${sanitizedQuality}.${sanitizedExt}"
+                val sanitizedTitle = sanitizeForFilename(item.title).take(45).ifEmpty { "VidSnap_Video" }
+                val sanitizedQuality = sanitizeForFilename(item.format.resolutionOrQuality).take(20).ifEmpty { "HD" }
+                val sanitizedExt = sanitizeForFilename(item.format.fileExtension).ifEmpty { "mp4" }
+                val fileName = "${sanitizedTitle}_${sanitizedQuality}.${sanitizedExt}"
 
-            val success = executeStreamingDownload(
-                context = context,
-                downloadId = downloadId,
-                streamUrl = directUrl,
-                sourceReferer = item.sourceUrl,
-                fileName = fileName,
-                isAudio = item.format.mediaType == MediaType.AUDIO
-            )
+                val success = executeStreamingDownload(
+                    context = context,
+                    downloadId = downloadId,
+                    streamUrl = directUrl,
+                    sourceReferer = item.sourceUrl,
+                    fileName = fileName,
+                    isAudio = item.format.mediaType == MediaType.AUDIO
+                )
 
-            if (!success) {
-                markDownloadFailed(downloadId, "Retry failed.")
-                showToast(context, "Retry failed. Try opening in browser.")
+                if (!success) {
+                    markDownloadFailed(downloadId, "Retry failed.")
+                    showToast(context, "Retry failed. Try opening in browser.")
+                }
+            } catch (c: CancellationException) {
+                markDownloadFailed(downloadId, "Cancelled")
+                throw c
+            } catch (t: Throwable) {
+                Log.e(TAG, "Retry failed with exception", t)
+                markDownloadFailed(downloadId, t.localizedMessage ?: "Network error")
+            } finally {
+                activeJobs.remove(downloadId)
             }
         }
+        activeJobs[downloadId] = job
+    }
+
+    fun cancelDownload(downloadId: Long) {
+        activeCalls.remove(downloadId)?.cancel()
+        activeJobs.remove(downloadId)?.cancel()
+        val ctx = appContext
+        val dest = activeDestinations.remove(downloadId)
+        if (ctx != null && dest != null) {
+            StorageManager.discardMediaDestination(ctx, dest)
+        }
+        _downloadList.value = _downloadList.value.map {
+            if (it.id == downloadId) it.copy(
+                status = DownloadStatus.FAILED,
+                errorMessage = "Cancelled by user",
+                downloadSpeed = ""
+            ) else it
+        }
+        persistDownloads()
     }
 
     private suspend fun executeStreamingDownload(
@@ -315,9 +360,16 @@ object DownloadHelper {
         isAudio: Boolean,
         useAlternateHeaders: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
-        val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
+        val mimeType = when {
+            fileName.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+            fileName.endsWith(".m4a", ignoreCase = true) -> "audio/mp4"
+            fileName.endsWith(".webm", ignoreCase = true) -> if (isAudio) "audio/webm" else "video/webm"
+            else -> if (isAudio) "audio/mpeg" else "video/mp4"
+        }
         val destination = StorageManager.createMediaDestination(context, fileName, mimeType, isAudio)
             ?: return@withContext false
+
+        activeDestinations[downloadId] = destination
 
         val reqBuilder = Request.Builder().url(streamUrl)
 
@@ -360,9 +412,11 @@ object DownloadHelper {
         reqBuilder.addHeader("Connection", "keep-alive")
 
         val request = reqBuilder.build()
+        val call = httpClient.newCall(request)
+        activeCalls[downloadId] = call
 
         try {
-            val response = httpClient.newCall(request).execute()
+            val response = call.execute()
             if (!response.isSuccessful && response.code != 206) {
                 Log.w(TAG, "Download HTTP ${response.code} for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
@@ -469,6 +523,9 @@ object DownloadHelper {
             if (e is CancellationException) throw e
             Log.e(TAG, "Download streaming exception for $fileName", e)
             false
+        } finally {
+            activeCalls.remove(downloadId)
+            activeDestinations.remove(downloadId)
         }
     }
 
@@ -508,6 +565,7 @@ object DownloadHelper {
     }
 
     fun removeDownload(id: Long) {
+        cancelDownload(id)
         val target = _downloadList.value.firstOrNull { it.id == id }
         val ctx = appContext
         if (target != null && ctx != null) {

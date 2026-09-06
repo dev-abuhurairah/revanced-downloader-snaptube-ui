@@ -49,6 +49,12 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground Download Service for reliable background downloads on Android 8-14 -->
+        <service
+            android:name=".core.download.DownloadService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
 
 </manifest>

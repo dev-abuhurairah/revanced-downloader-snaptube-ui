@@ -33,18 +33,19 @@ object VideoExtractorEngine {
     // Verified working Piped instances with proxy streaming support
     private val PIPED_INSTANCES = listOf(
         "https://api.piped.private.coffee",
+        "https://pipedapi.reallyaweso.me",
         "https://pipedapi.tokhmi.xyz",
-        "https://piped-api.garudalinux.org",
-        "https://pipedapi.moomoo.me",
+        "https://piped-api.lunar.icu",
         "https://pipedapi.leptons.xyz"
     )
 
     // Verified Invidious instances for failover
     private val INVIDIOUS_INSTANCES = listOf(
-        "https://inv.nadeko.net",
-        "https://yt.chocolatemoo53.com",
-        "https://invidious.tiekoetter.com",
-        "https://invidious.f5.si"
+        "https://invidious.f5.si",
+        "https://inv.tux.pizza",
+        "https://invidious.asir.dev",
+        "https://yt.artemislena.eu",
+        "https://invidious.drgns.space"
     )
 
     fun detectPlatform(url: String): PlatformType {
@@ -377,23 +378,32 @@ object VideoExtractorEngine {
 
                             val formatStr = stream.optString("format", "").uppercase()
                             val mimeType = stream.optString("mimeType", "").lowercase()
-                            val isMp4 = formatStr.contains("MP4") || mimeType.contains("video/mp4")
-                            if (!isMp4) continue
+                            val isSupported = formatStr.contains("MP4") || formatStr.contains("MPEG") || mimeType.contains("video/mp4") || mimeType.contains("video/webm")
+                            if (!isSupported) continue
 
                             val videoOnly = stream.optBoolean("videoOnly", false)
-                            // Clean quality label
                             val qualityLabel = if (quality.contains("p")) quality else "${quality}p"
-                            val label = if (videoOnly) "$qualityLabel" else "$qualityLabel (Full HD)"
+                            val label = when {
+                                qualityLabel.contains("1080") -> "1080p Full HD"
+                                qualityLabel.contains("720") -> "720p HD"
+                                qualityLabel.contains("480") -> "480p SD"
+                                qualityLabel.contains("360") -> if (!videoOnly) "360p (Fast)" else "360p"
+                                else -> qualityLabel
+                            }
                             if (!seenVideoQualities.add(label)) continue
 
                             val contentLength = stream.optString("contentLength", "").toLongOrNull()
+                            val bitrate = stream.optLong("bitrate", 0L)
+                            val approxBytes = contentLength ?: if (bitrate > 0 && durationSec > 0) (bitrate / 8) * durationSec else null
+
+                            val ext = if (mimeType.contains("webm")) "webm" else "mp4"
 
                             formatsList.add(
                                 MediaFormat(
                                     formatId = "piped_v_$i",
                                     resolutionOrQuality = label,
-                                    fileExtension = "mp4",
-                                    approxSize = contentLength?.let { formatFileSize(it) },
+                                    fileExtension = ext,
+                                    approxSize = approxBytes?.let { formatFileSize(it) },
                                     mediaType = MediaType.VIDEO,
                                     directUrl = streamUrl
                                 )
@@ -412,17 +422,19 @@ object VideoExtractorEngine {
                             val mimeType = stream.optString("mimeType", "").lowercase()
                             val bitrate = stream.optInt("bitrate", 0)
                             val bitrateLabel = if (bitrate > 0) "${bitrate / 1000}kbps" else "128kbps"
+                            val label = "Audio MP3 / M4A ($bitrateLabel)"
                             if (!seenAudioBitrates.add(bitrateLabel)) continue
 
                             val ext = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "mp3"
                             val contentLength = stream.optString("contentLength", "").toLongOrNull()
+                            val approxBytes = contentLength ?: if (bitrate > 0 && durationSec > 0) (bitrate.toLong() / 8) * durationSec else null
 
                             formatsList.add(
                                 MediaFormat(
                                     formatId = "piped_a_$i",
-                                    resolutionOrQuality = "Music Audio ($bitrateLabel)",
+                                    resolutionOrQuality = label,
                                     fileExtension = ext,
-                                    approxSize = contentLength?.let { formatFileSize(it) } ?: "Audio",
+                                    approxSize = approxBytes?.let { formatFileSize(it) } ?: "Audio",
                                     mediaType = MediaType.AUDIO,
                                     directUrl = streamUrl
                                 )
@@ -965,19 +977,36 @@ object VideoExtractorEngine {
     // Utilities
     // ==========================================
     fun extractYouTubeId(url: String): String? {
+        val clean = url.trim()
         val patterns = listOf(
-            "(?:v=|/v/)([a-zA-Z0-9_-]{11})",
-            "youtu\\.be/([a-zA-Z0-9_-]{11})",
-            "shorts/([a-zA-Z0-9_-]{11})",
-            "embed/([a-zA-Z0-9_-]{11})",
-            "live/([a-zA-Z0-9_-]{11})",
-            "watch/([a-zA-Z0-9_-]{11})"
+            "(?:[?&]v=|/v/)([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)",
+            "youtu\\.be/([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)",
+            "shorts/([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)",
+            "embed/([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)",
+            "live/([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)",
+            "watch/([a-zA-Z0-9_-]{11})(?:[?&/#\\s]|$)"
         )
         for (pat in patterns) {
-            val matcher = Pattern.compile(pat).matcher(url)
-            if (matcher.find()) return matcher.group(1)
+            val matcher = Pattern.compile(pat, Pattern.CASE_INSENSITIVE).matcher(clean)
+            if (matcher.find()) {
+                val candidate = matcher.group(1)
+                if (!candidate.isNullOrBlank() && candidate.length == 11) {
+                    return candidate
+                }
+            }
         }
         return null
+    }
+
+    fun isYouTubeUrlExpired(url: String): Boolean {
+        if (!url.contains("expire=")) return false
+        val matcher = Pattern.compile("[?&]expire=(\\d+)").matcher(url)
+        if (matcher.find()) {
+            val expireEpoch = matcher.group(1)?.toLongOrNull() ?: return false
+            val nowEpoch = System.currentTimeMillis() / 1000
+            return nowEpoch >= (expireEpoch - 60)
+        }
+        return false
     }
 
     private fun formatDuration(seconds: Long): String {

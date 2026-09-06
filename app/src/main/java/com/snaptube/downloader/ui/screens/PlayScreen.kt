@@ -316,8 +316,8 @@ private fun DownloadCard(
 
                 IconButton(onClick = onDeleteClick) {
                     Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete",
+                        imageVector = if (item.status == DownloadStatus.DOWNLOADING) Icons.Default.Close else Icons.Default.Delete,
+                        contentDescription = if (item.status == DownloadStatus.DOWNLOADING) "Cancel" else "Delete",
                         tint = SnaptubeTextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
