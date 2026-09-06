@@ -79,4 +79,14 @@ class UrlAndFormatValidationTest {
             VideoExtractorEngine.extractYouTubeId("https://www.youtube.com/shorts/dQw4w9WgXcQ")
         )
     }
+
+    @Test
+    fun testCleanMediaUrlStripsChunkRange() {
+        val chunkUrl = "https://rr4.googlevideo.com/videoplayback?expire=123&range=0-150000&rn=1&itag=18"
+        val cleaned = VideoExtractorEngine.cleanMediaUrl(chunkUrl)
+        assertFalse(cleaned.contains("range="))
+        assertFalse(cleaned.contains("rn="))
+        assertTrue(cleaned.contains("itag=18"))
+        assertTrue(cleaned.contains("expire=123"))
+    }
 }

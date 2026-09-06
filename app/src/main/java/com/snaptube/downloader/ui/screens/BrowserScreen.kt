@@ -91,18 +91,45 @@ fun BrowserScreen(
     fun downloadCurrentPage() {
         val target = webViewInstance?.url ?: currentUrl
         isResolving = true
-        coroutineScope.launch {
-            val res = VideoExtractorEngine.resolveMedia(
-                inputQueryOrUrl = target,
-                directStreamUrl = detectedStreamUrl
-            )
-            isResolving = false
-            when (res) {
-                is ResolveResult.Success -> {
-                    resolvedMedia = res.mediaInfo
+
+        // First attempt: inspect DOM for active video element (Instagram, TikTok, YouTube web)
+        webViewInstance?.evaluateJavascript(
+            """
+            (function() {
+                var vids = document.getElementsByTagName('video');
+                for (var i = 0; i < vids.length; i++) {
+                    var s = vids[i].src || '';
+                    if (s.indexOf('http') === 0 && s.indexOf('blob:') !== 0) return s;
+                    var sources = vids[i].getElementsByTagName('source');
+                    for (var j = 0; j < sources.length; j++) {
+                        var ss = sources[j].src || '';
+                        if (ss.indexOf('http') === 0 && ss.indexOf('blob:') !== 0) return ss;
+                    }
                 }
-                is ResolveResult.Failure -> {
-                    Toast.makeText(context, res.userMessage, Toast.LENGTH_SHORT).show()
+                return '';
+            })();
+            """.trimIndent()
+        ) { domResult ->
+            val cleanDom = domResult?.trim('"', '\'', ' ', '\\')
+            val effectiveStream = if (!cleanDom.isNullOrBlank() && cleanDom.startsWith("http")) {
+                VideoExtractorEngine.cleanMediaUrl(cleanDom)
+            } else {
+                detectedStreamUrl
+            }
+
+            coroutineScope.launch {
+                val res = VideoExtractorEngine.resolveMedia(
+                    inputQueryOrUrl = target,
+                    directStreamUrl = effectiveStream
+                )
+                isResolving = false
+                when (res) {
+                    is ResolveResult.Success -> {
+                        resolvedMedia = res.mediaInfo
+                    }
+                    is ResolveResult.Failure -> {
+                        Toast.makeText(context, res.userMessage, Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -209,13 +236,48 @@ fun BrowserScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 currentUrl = url.orEmpty()
                                 pageTitle = view?.title.orEmpty()
+                                // Auto-sniff DOM video when page finishes loading
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var vids = document.getElementsByTagName('video');
+                                        for (var i = 0; i < vids.length; i++) {
+                                            var s = vids[i].src || '';
+                                            if (s.indexOf('http') === 0 && s.indexOf('blob:') !== 0) return s;
+                                            var sources = vids[i].getElementsByTagName('source');
+                                            for (var j = 0; j < sources.length; j++) {
+                                                var ss = sources[j].src || '';
+                                                if (ss.indexOf('http') === 0 && ss.indexOf('blob:') !== 0) return ss;
+                                            }
+                                        }
+                                        return '';
+                                    })();
+                                    """.trimIndent()
+                                ) { domRes ->
+                                    val cleanDom = domRes?.trim('"', '\'', ' ', '\\')
+                                    if (!cleanDom.isNullOrBlank() && cleanDom.startsWith("http")) {
+                                        detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(cleanDom)
+                                    }
+                                }
+                            }
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: android.webkit.WebResourceRequest?
+                            ): android.webkit.WebResourceResponse? {
+                                val reqUrl = request?.url?.toString().orEmpty()
+                                val lower = reqUrl.lowercase()
+                                if (lower.contains(".mp4") || lower.contains("videoplayback") ||
+                                    lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")) {
+                                    detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(reqUrl)
+                                }
+                                return super.shouldInterceptRequest(view, request)
                             }
                             override fun onLoadResource(view: WebView?, url: String?) {
                                 super.onLoadResource(view, url)
                                 val lower = url?.lowercase().orEmpty()
                                 if (lower.contains(".mp4") || lower.contains("videoplayback") ||
-                                    (lower.contains("video") && (lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")))) {
-                                    detectedStreamUrl = url
+                                    lower.contains("cdninstagram.com") || lower.contains("fbcdn.net") || lower.contains("tiktokcdn.com")) {
+                                    detectedStreamUrl = VideoExtractorEngine.cleanMediaUrl(url.orEmpty())
                                 }
                             }
                         }

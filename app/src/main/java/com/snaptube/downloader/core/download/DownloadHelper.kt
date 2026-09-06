@@ -233,12 +233,24 @@ object DownloadHelper {
             ?: return@withContext false
 
         val reqBuilder = Request.Builder().url(streamUrl)
-        reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
-        val cleanReferer = sanitizeHeaderValue(sourceReferer)
+        reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+
+        // Forward session cookies from WebView (essential for Instagram CDN and authenticated streams)
+        val cookieManager = runCatching { android.webkit.CookieManager.getInstance() }.getOrNull()
+        val streamCookies = runCatching { cookieManager?.getCookie(streamUrl) }.getOrNull()
+        val refererCookies = runCatching { cookieManager?.getCookie(sourceReferer) }.getOrNull()
+        val cookies = streamCookies ?: refererCookies
+        if (!cookies.isNullOrBlank()) {
+            reqBuilder.addHeader("Cookie", cookies)
+        }
+
+        val isInstagram = streamUrl.contains("cdninstagram.com") || streamUrl.contains("fbcdn.net") || sourceReferer.contains("instagram.com")
+        val cleanReferer = if (isInstagram) "https://www.instagram.com/" else sanitizeHeaderValue(sourceReferer)
         if (cleanReferer != null) {
             reqBuilder.addHeader("Referer", cleanReferer)
         }
         reqBuilder.addHeader("Accept", "*/*")
+        reqBuilder.addHeader("Accept-Encoding", "identity")
         val request = reqBuilder.build()
 
         try {

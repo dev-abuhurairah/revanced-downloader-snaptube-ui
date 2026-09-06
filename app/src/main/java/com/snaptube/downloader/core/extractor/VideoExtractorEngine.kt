@@ -13,7 +13,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -32,14 +31,6 @@ object VideoExtractorEngine {
         "https://api.piped.private.coffee",
         "https://pipedapi.leptons.xyz",
         "https://pipedapi.tokhmi.xyz"
-    )
-
-    // High-availability Cobalt API instances for universal extraction
-    private val COBALT_INSTANCES = listOf(
-        "https://api.cobalt.tools",
-        "https://cobalt.api.scav.top",
-        "https://api.wuk.sh",
-        "https://cobalt-api.kwiatekm.tokyo"
     )
 
     fun detectPlatform(url: String): PlatformType {
@@ -75,6 +66,16 @@ object VideoExtractorEngine {
         }
     }
 
+    fun cleanMediaUrl(url: String): String {
+        if (url.contains("videoplayback")) {
+            // Strip range and rn byte-range chunk parameters so Google Video serves the full stream
+            return url.replace(Regex("([?&])range=[^&]+(&|$)"), "$1")
+                .replace(Regex("([?&])rn=[^&]+(&|$)"), "$1")
+                .trimEnd('&', '?')
+        }
+        return url
+    }
+
     suspend fun resolveMedia(
         inputQueryOrUrl: String,
         directStreamUrl: String? = null
@@ -91,24 +92,27 @@ object VideoExtractorEngine {
         val queryUrl = extracted
         val platform = detectPlatform(queryUrl)
 
-        // 1. If an actual stream was captured from the in-app browser
+        // 1. If an actual stream was captured from the in-app browser or DOM
         if (!directStreamUrl.isNullOrBlank() && isValidHttpUrl(directStreamUrl)) {
-            val directMedia = createDirectStreamMedia(queryUrl, directStreamUrl, platform)
+            val directMedia = createDirectStreamMedia(queryUrl, cleanMediaUrl(directStreamUrl), platform)
             return@withContext ResolveResult.Success(directMedia)
         }
 
-        // 2. YouTube extraction via Piped / Cobalt
+        // 2. YouTube direct Innertube player & Piped resolution
         if (platform == PlatformType.YOUTUBE) {
             val ytId = extractYouTubeId(queryUrl)
             if (ytId != null) {
+                // Priority 1: Direct native Innertube player extraction
+                val innertubeResult = tryInnertubeExtraction(ytId, queryUrl)
+                if (innertubeResult != null && innertubeResult.formats.isNotEmpty()) {
+                    return@withContext ResolveResult.Success(innertubeResult)
+                }
+
+                // Priority 2: Piped API mirrors
                 val pipedResult = tryPipedExtraction(ytId, queryUrl)
                 if (pipedResult != null && pipedResult.formats.isNotEmpty()) {
                     return@withContext ResolveResult.Success(pipedResult)
                 }
-            }
-            val cobaltResult = tryCobaltExtraction(queryUrl, platform)
-            if (cobaltResult != null && cobaltResult.formats.isNotEmpty()) {
-                return@withContext ResolveResult.Success(cobaltResult)
             }
         }
 
@@ -120,18 +124,116 @@ object VideoExtractorEngine {
             }
         }
 
-        // 4. Social media extraction via Cobalt (Instagram, FB, X, etc.)
-        val socialResult = tryCobaltExtraction(queryUrl, platform)
-        if (socialResult != null && socialResult.formats.isNotEmpty()) {
-            return@withContext ResolveResult.Success(socialResult)
-        }
-
-        // 5. No fake fallbacks! Return honest failure
+        // 4. Honest fallback guiding user to built-in browser for Instagram, FB, etc.
         ResolveResult.Failure(
             errorType = ResolveErrorType.RESOLVER_UNAVAILABLE,
-            userMessage = "Could not extract video stream automatically. Open in the in-app browser to play and download.",
-            technicalDetails = "All public resolution endpoints failed or returned no stream for platform: ${platform.displayName}"
+            userMessage = "Opening in built-in browser to play and capture video...",
+            technicalDetails = "Direct extraction requires in-browser session for ${platform.displayName}"
         )
+    }
+
+    private fun tryInnertubeExtraction(videoId: String, sourceUrl: String): MediaInfo? {
+        try {
+            val payload = JSONObject().apply {
+                put("videoId", videoId)
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.50.31")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("osName", "Android")
+                        put("osVersion", "12")
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+            }
+
+            val request = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+                .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .addHeader("Content-Type", "application/json")
+                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                val json = JSONObject(body)
+
+                val status = json.optJSONObject("playabilityStatus")?.optString("status")
+                if (status != "OK") return null
+
+                val videoDetails = json.optJSONObject("videoDetails")
+                val title = videoDetails?.optString("title", "YouTube Video") ?: "YouTube Video"
+                val author = videoDetails?.optString("author", "YouTube Creator") ?: "YouTube Creator"
+                val lengthSeconds = videoDetails?.optLong("lengthSeconds", 0L) ?: 0L
+                val durationStr = formatDuration(lengthSeconds)
+                val thumbnail = "https://img.youtube.com/vi/$videoId/hqdefault.jpg"
+
+                val streamingData = json.optJSONObject("streamingData") ?: return null
+                val formatsList = mutableListOf<MediaFormat>()
+
+                // 1. Multiplexed combined video + audio streams
+                val formats = streamingData.optJSONArray("formats")
+                if (formats != null) {
+                    for (i in 0 until formats.length()) {
+                        val f = formats.optJSONObject(i) ?: continue
+                        val directUrl = f.optString("url")
+                        if (isValidHttpUrl(directUrl) && !directUrl.contains("odycdn.com")) {
+                            val quality = f.optString("qualityLabel", "360p")
+                            formatsList.add(
+                                MediaFormat(
+                                    formatId = "yt_it_v_$i",
+                                    resolutionOrQuality = quality,
+                                    fileExtension = "mp4",
+                                    approxSize = null,
+                                    mediaType = MediaType.VIDEO,
+                                    directUrl = cleanMediaUrl(directUrl)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // 2. Audio stream (from adaptiveFormats)
+                val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+                if (adaptiveFormats != null) {
+                    for (i in 0 until adaptiveFormats.length()) {
+                        val af = adaptiveFormats.optJSONObject(i) ?: continue
+                        val mimeType = af.optString("mimeType", "")
+                        val directUrl = af.optString("url")
+                        if (mimeType.contains("audio") && isValidHttpUrl(directUrl) && !directUrl.contains("odycdn.com")) {
+                            formatsList.add(
+                                MediaFormat(
+                                    formatId = "yt_it_audio",
+                                    resolutionOrQuality = "Original Audio",
+                                    fileExtension = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "mp3",
+                                    approxSize = "Audio",
+                                    mediaType = MediaType.AUDIO,
+                                    directUrl = cleanMediaUrl(directUrl)
+                                )
+                            )
+                            break
+                        }
+                    }
+                }
+
+                if (formatsList.isNotEmpty()) {
+                    return MediaInfo(
+                        sourceUrl = sourceUrl,
+                        title = title,
+                        author = author,
+                        duration = durationStr,
+                        thumbnailUrl = thumbnail,
+                        platform = PlatformType.YOUTUBE,
+                        formats = formatsList
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return null
     }
 
     private fun tryPipedExtraction(videoId: String, sourceUrl: String): MediaInfo? {
@@ -163,8 +265,9 @@ object VideoExtractorEngine {
                             val formatUpper = stream.optString("format", "").uppercase()
                             val mimeType = stream.optString("mimeType", "").lowercase()
                             val isMpeg = formatUpper.contains("MP4") || mimeType.contains("video/mp4")
+                            val isAuthBlocked = streamUrl.contains("odycdn.com")
 
-                            if (isValidHttpUrl(streamUrl) && isMpeg) {
+                            if (isValidHttpUrl(streamUrl) && isMpeg && !isAuthBlocked) {
                                 formatsList.add(
                                     MediaFormat(
                                         formatId = "yt_v_$i",
@@ -172,14 +275,14 @@ object VideoExtractorEngine {
                                         fileExtension = "mp4",
                                         approxSize = stream.optString("approxSize").takeIf { it.isNotBlank() },
                                         mediaType = MediaType.VIDEO,
-                                        directUrl = streamUrl
+                                        directUrl = cleanMediaUrl(streamUrl)
                                     )
                                 )
                             }
                         }
                     }
 
-                    // Only add real audio stream if genuinely present
+                    // Real audio stream
                     val audioStreams = json.optJSONArray("audioStreams")
                     if (audioStreams != null) {
                         for (i in 0 until audioStreams.length()) {
@@ -187,9 +290,10 @@ object VideoExtractorEngine {
                             val streamUrl = stream.optString("url")
                             val quality = stream.optString("quality", "Audio")
                             val mimeType = stream.optString("mimeType", "").lowercase()
+                            val isAuthBlocked = streamUrl.contains("odycdn.com")
                             val ext = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "mp3"
 
-                            if (isValidHttpUrl(streamUrl)) {
+                            if (isValidHttpUrl(streamUrl) && !isAuthBlocked) {
                                 formatsList.add(
                                     MediaFormat(
                                         formatId = "yt_a_$i",
@@ -197,10 +301,10 @@ object VideoExtractorEngine {
                                         fileExtension = ext,
                                         approxSize = "Audio",
                                         mediaType = MediaType.AUDIO,
-                                        directUrl = streamUrl
+                                        directUrl = cleanMediaUrl(streamUrl)
                                     )
                                 )
-                                break // Add best single audio stream
+                                break
                             }
                         }
                     }
@@ -217,9 +321,7 @@ object VideoExtractorEngine {
                         )
                     }
                 }
-            } catch (_: Exception) {
-                // Continue to next mirror
-            }
+            } catch (_: Exception) {}
         }
         return null
     }
@@ -273,7 +375,6 @@ object VideoExtractorEngine {
                         )
                     }
 
-                    // Only include music if a valid audio stream exists
                     if (isValidHttpUrl(music)) {
                         formats.add(
                             MediaFormat(
@@ -300,86 +401,7 @@ object VideoExtractorEngine {
                     }
                 }
             }
-        } catch (_: Exception) {
-            // Failure falls back
-        }
-        return null
-    }
-
-    private fun tryCobaltExtraction(url: String, platform: PlatformType): MediaInfo? {
-        val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-
-        for (instance in COBALT_INSTANCES) {
-            try {
-                val payload = JSONObject().apply {
-                    put("url", url)
-                    put("videoQuality", "1080")
-                    put("downloadMode", "auto")
-                }
-                val request = Request.Builder()
-                    .url("$instance/api/json")
-                    .post(payload.toString().toRequestBody(jsonMediaType))
-                    .addHeader("Accept", "application/json")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .build()
-
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use
-                    val body = response.body?.string() ?: return@use
-                    val json = JSONObject(body)
-                    val status = json.optString("status")
-
-                    var videoUrl: String? = null
-                    val filename = json.optString("filename").takeIf { it.isNotBlank() }
-
-                    if (status == "stream" || status == "tunnel" || status == "redirect") {
-                        videoUrl = json.optString("url")
-                    } else if (status == "picker") {
-                        val pickerArray = json.optJSONArray("picker")
-                        if (pickerArray != null && pickerArray.length() > 0) {
-                            for (p in 0 until pickerArray.length()) {
-                                val item = pickerArray.optJSONObject(p) ?: continue
-                                val itemUrl = item.optString("url")
-                                if (isValidHttpUrl(itemUrl)) {
-                                    videoUrl = itemUrl
-                                    break
-                                }
-                            }
-                        }
-                    }
-
-                    if (!videoUrl.isNullOrBlank() && isValidHttpUrl(videoUrl)) {
-                        val cleanTitle = filename?.replace(Regex("\\.(mp4|mp3|mkv|webm)$", RegexOption.IGNORE_CASE), "")
-                            ?: "${platform.displayName} Video"
-
-                        // Single honest format: do NOT fake multiple qualities or fake MP3 conversion
-                        val formats = listOf(
-                            MediaFormat(
-                                formatId = "cobalt_best",
-                                resolutionOrQuality = "Original Video",
-                                fileExtension = "mp4",
-                                approxSize = null,
-                                mediaType = MediaType.VIDEO,
-                                directUrl = videoUrl
-                            )
-                        )
-
-                        return MediaInfo(
-                            sourceUrl = url,
-                            title = cleanTitle,
-                            author = "@${platform.displayName.lowercase()}_creator",
-                            duration = "HD",
-                            thumbnailUrl = getPlatformThumbnail(url, platform),
-                            platform = platform,
-                            formats = formats
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-                // Try next mirror
-            }
-        }
+        } catch (_: Exception) {}
         return null
     }
 
