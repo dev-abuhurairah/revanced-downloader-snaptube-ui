@@ -5,8 +5,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,6 +60,7 @@ import com.snaptube.downloader.ui.screens.BrowserScreen
 import com.snaptube.downloader.ui.screens.HomeScreen
 import com.snaptube.downloader.ui.screens.PlayScreen
 import com.snaptube.downloader.ui.screens.SettingsScreen
+import com.snaptube.downloader.ui.screens.SplashScreen
 import com.snaptube.downloader.ui.theme.SnaptubeBlack
 import com.snaptube.downloader.ui.theme.SnaptubeTheme
 import com.snaptube.downloader.ui.theme.SnaptubeYellow
@@ -81,7 +86,23 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SnaptubeTheme {
-                SnaptubeMainApp(initialSharedUrl = sharedUrl)
+                var isSplashFinished by remember { mutableStateOf(false) }
+
+                AnimatedContent(
+                    targetState = isSplashFinished,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(350))
+                    },
+                    label = "splash_transition"
+                ) { finished ->
+                    if (!finished) {
+                        SplashScreen(
+                            onSplashFinished = { isSplashFinished = true }
+                        )
+                    } else {
+                        SnaptubeMainApp(initialSharedUrl = sharedUrl)
+                    }
+                }
             }
         }
     }
