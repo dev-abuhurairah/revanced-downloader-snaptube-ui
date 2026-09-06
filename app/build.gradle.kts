@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.snaptube.downloader"
+        applicationId = "com.vidsnap.downloader"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -30,7 +30,6 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         debug {
-            applicationIdSuffix = ".debug"
             isDebuggable = true
         }
     }

@@ -197,28 +197,70 @@ object VideoExtractorEngine {
                     }
                 }
 
-                // 2. Audio stream (from adaptiveFormats)
+                // 2. Adaptive video + audio streams (contains 1080p, 1440p, 2160p/4K, etc.)
                 val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+                val seenVideoQualities = mutableSetOf<String>()
+                val seenAudioBitrates = mutableSetOf<Int>()
                 if (adaptiveFormats != null) {
                     for (i in 0 until adaptiveFormats.length()) {
                         val af = adaptiveFormats.optJSONObject(i) ?: continue
                         val mimeType = af.optString("mimeType", "")
                         val directUrl = af.optString("url")
-                        if (mimeType.contains("audio") && isValidHttpUrl(directUrl) && !directUrl.contains("odycdn.com")) {
+                        if (!isValidHttpUrl(directUrl) || directUrl.contains("odycdn.com")) continue
+
+                        if (mimeType.contains("video")) {
+                            val quality = af.optString("qualityLabel", "").ifBlank { af.optString("quality", "") }
+                            if (quality.isBlank()) continue
+                            // Only take MP4/H.264 adaptive video streams for maximum device compatibility
+                            val isVideoMp4 = mimeType.contains("mp4") || mimeType.contains("avc")
+                            if (!isVideoMp4) continue
+                            // Deduplicate: keep one stream per quality label (e.g. one "1080p")
+                            if (!seenVideoQualities.add(quality)) continue
+
+                            val contentLength = af.optLong("contentLength", 0L)
+                            val sizeStr = if (contentLength > 0) formatFileSize(contentLength) else null
+
                             formatsList.add(
                                 MediaFormat(
-                                    formatId = "yt_it_audio",
-                                    resolutionOrQuality = "Original Audio",
-                                    fileExtension = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "mp3",
+                                    formatId = "yt_it_av_$i",
+                                    resolutionOrQuality = quality,
+                                    fileExtension = "mp4",
+                                    approxSize = sizeStr,
+                                    mediaType = MediaType.VIDEO,
+                                    directUrl = cleanMediaUrl(directUrl)
+                                )
+                            )
+                        } else if (mimeType.contains("audio")) {
+                            val bitrate = af.optInt("averageBitrate", af.optInt("bitrate", 0))
+                            // Deduplicate: keep one stream per bitrate tier
+                            val bitrateTier = (bitrate / 1000) * 1000 // round to nearest 1000
+                            if (!seenAudioBitrates.add(bitrateTier)) continue
+
+                            val bitrateLabel = if (bitrate > 0) "${bitrate / 1000}kbps" else "Original"
+                            val ext = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "webm"
+
+                            formatsList.add(
+                                MediaFormat(
+                                    formatId = "yt_it_a_$i",
+                                    resolutionOrQuality = "Audio ($bitrateLabel)",
+                                    fileExtension = ext,
                                     approxSize = "Audio",
                                     mediaType = MediaType.AUDIO,
                                     directUrl = cleanMediaUrl(directUrl)
                                 )
                             )
-                            break
                         }
                     }
                 }
+
+                // Sort video formats by resolution descending (2160p > 1440p > 1080p > 720p > ...)
+                val videoFormats = formatsList.filter { it.mediaType == MediaType.VIDEO }
+                    .sortedByDescending { extractResolutionNumber(it.resolutionOrQuality) }
+                val audioFormats = formatsList.filter { it.mediaType == MediaType.AUDIO }
+                    .sortedByDescending { extractBitrateNumber(it.resolutionOrQuality) }
+                formatsList.clear()
+                formatsList.addAll(videoFormats)
+                formatsList.addAll(audioFormats)
 
                 if (formatsList.isNotEmpty()) {
                     return MediaInfo(
@@ -256,6 +298,8 @@ object VideoExtractorEngine {
                     val thumbnail = json.optString("thumbnailUrl", "https://img.youtube.com/vi/$videoId/hqdefault.jpg")
 
                     val formatsList = mutableListOf<MediaFormat>()
+                    val seenVideoQualities = mutableSetOf<String>()
+
                     val videoStreams = json.optJSONArray("videoStreams")
                     if (videoStreams != null) {
                         for (i in 0 until videoStreams.length()) {
@@ -264,16 +308,27 @@ object VideoExtractorEngine {
                             val streamUrl = stream.optString("url")
                             val formatUpper = stream.optString("format", "").uppercase()
                             val mimeType = stream.optString("mimeType", "").lowercase()
-                            val isMpeg = formatUpper.contains("MP4") || mimeType.contains("video/mp4")
                             val isAuthBlocked = streamUrl.contains("odycdn.com")
+                            val videoOnly = stream.optBoolean("videoOnly", false)
+
+                            // Accept MP4 streams (both muxed and video-only for higher resolutions)
+                            val isMpeg = formatUpper.contains("MP4") || mimeType.contains("video/mp4")
 
                             if (isValidHttpUrl(streamUrl) && isMpeg && !isAuthBlocked) {
+                                // Deduplicate by quality label; prefer muxed over video-only
+                                val qualityKey = quality
+                                if (qualityKey in seenVideoQualities && videoOnly) continue
+                                seenVideoQualities.add(qualityKey)
+
+                                val label = if (videoOnly) "$quality (Video Only)" else quality
+
                                 formatsList.add(
                                     MediaFormat(
                                         formatId = "yt_v_$i",
-                                        resolutionOrQuality = quality,
+                                        resolutionOrQuality = label,
                                         fileExtension = "mp4",
-                                        approxSize = stream.optString("approxSize").takeIf { it.isNotBlank() },
+                                        approxSize = stream.optString("contentLength").toLongOrNull()
+                                            ?.let { formatFileSize(it) },
                                         mediaType = MediaType.VIDEO,
                                         directUrl = cleanMediaUrl(streamUrl)
                                     )
@@ -282,32 +337,45 @@ object VideoExtractorEngine {
                         }
                     }
 
-                    // Real audio stream
+                    // Collect ALL audio streams, not just the first one
                     val audioStreams = json.optJSONArray("audioStreams")
+                    val seenAudioQualities = mutableSetOf<String>()
                     if (audioStreams != null) {
                         for (i in 0 until audioStreams.length()) {
                             val stream = audioStreams.optJSONObject(i) ?: continue
                             val streamUrl = stream.optString("url")
                             val quality = stream.optString("quality", "Audio")
                             val mimeType = stream.optString("mimeType", "").lowercase()
+                            val bitrate = stream.optInt("bitrate", 0)
                             val isAuthBlocked = streamUrl.contains("odycdn.com")
-                            val ext = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "mp3"
+                            val ext = if (mimeType.contains("mp4") || mimeType.contains("m4a")) "m4a" else "webm"
 
                             if (isValidHttpUrl(streamUrl) && !isAuthBlocked) {
+                                val bitrateLabel = if (bitrate > 0) "${bitrate / 1000}kbps" else quality
+                                if (!seenAudioQualities.add(bitrateLabel)) continue
+
                                 formatsList.add(
                                     MediaFormat(
                                         formatId = "yt_a_$i",
-                                        resolutionOrQuality = "Audio ($quality)",
+                                        resolutionOrQuality = "Audio ($bitrateLabel)",
                                         fileExtension = ext,
                                         approxSize = "Audio",
                                         mediaType = MediaType.AUDIO,
                                         directUrl = cleanMediaUrl(streamUrl)
                                     )
                                 )
-                                break
                             }
                         }
                     }
+
+                    // Sort: videos by resolution descending, then audio by bitrate descending
+                    val sortedVideos = formatsList.filter { it.mediaType == MediaType.VIDEO }
+                        .sortedByDescending { extractResolutionNumber(it.resolutionOrQuality) }
+                    val sortedAudio = formatsList.filter { it.mediaType == MediaType.AUDIO }
+                        .sortedByDescending { extractBitrateNumber(it.resolutionOrQuality) }
+                    formatsList.clear()
+                    formatsList.addAll(sortedVideos)
+                    formatsList.addAll(sortedAudio)
 
                     if (formatsList.isNotEmpty()) {
                         return MediaInfo(
@@ -458,4 +526,24 @@ object VideoExtractorEngine {
             else -> "https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&auto=format&fit=crop&q=80"
         }
     }
+
+    private fun formatFileSize(bytes: Long): String {
+        return when {
+            bytes >= 1_073_741_824 -> String.format("%.1f GB", bytes / 1_073_741_824.0)
+            bytes >= 1_048_576 -> String.format("%.1f MB", bytes / 1_048_576.0)
+            bytes >= 1024 -> String.format("%.0f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
+    }
+
+    private fun extractResolutionNumber(quality: String): Int {
+        val matcher = Pattern.compile("(\\d+)p").matcher(quality)
+        return if (matcher.find()) matcher.group(1)?.toIntOrNull() ?: 0 else 0
+    }
+
+    private fun extractBitrateNumber(quality: String): Int {
+        val matcher = Pattern.compile("(\\d+)kbps").matcher(quality)
+        return if (matcher.find()) matcher.group(1)?.toIntOrNull() ?: 0 else 0
+    }
 }
+
