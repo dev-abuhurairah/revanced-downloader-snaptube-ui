@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -282,7 +283,7 @@ private fun ModernNavBarItem(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(top = (-4).dp, end = (-6).dp)
+                            .offset(x = 6.dp, y = (-4).dp)
                             .size(16.dp)
                             .clip(CircleShape)
                             .background(if (isDownloadingBadge) SnaptubeYellow else Color(0xFF33333E)),
