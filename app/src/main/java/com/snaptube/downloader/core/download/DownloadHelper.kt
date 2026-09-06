@@ -3,6 +3,7 @@ package com.snaptube.downloader.core.download
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import com.snaptube.downloader.core.extractor.VideoExtractorEngine
 import com.snaptube.downloader.core.storage.MediaDestination
@@ -29,16 +30,21 @@ import kotlin.coroutines.cancellation.CancellationException
 
 object DownloadHelper {
 
+    private const val TAG = "DownloadHelper"
+
     private val _downloadList = MutableStateFlow<List<DownloadItem>>(emptyList())
     val downloadList: StateFlow<List<DownloadItem>> = _downloadList.asStateFlow()
 
     private var appContext: Context? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO)
 
+    // Extended timeouts for large video downloads
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     fun init(context: Context) {
@@ -103,7 +109,7 @@ object DownloadHelper {
             }
             _downloadList.value = items
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to load downloads from prefs", e)
         }
     }
 
@@ -140,7 +146,7 @@ object DownloadHelper {
             }
             prefs.edit().putString("saved_downloads", jsonArray.toString()).apply()
         } catch (e: Throwable) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to persist downloads", e)
         }
     }
 
@@ -207,13 +213,27 @@ object DownloadHelper {
                 )
 
                 if (!success) {
-                    markDownloadFailed(downloadId)
+                    // Retry once with different headers
+                    Log.w(TAG, "First download attempt failed, retrying with alternate headers...")
+                    val retrySuccess = executeStreamingDownload(
+                        context = context,
+                        downloadId = downloadId,
+                        streamUrl = downloadUrl,
+                        sourceReferer = mediaInfo.sourceUrl,
+                        fileName = fileName,
+                        isAudio = format.mediaType == MediaType.AUDIO,
+                        useAlternateHeaders = true
+                    )
+                    if (!retrySuccess) {
+                        markDownloadFailed(downloadId)
+                        showToast(context, "Download failed. The stream may have expired - try re-fetching the link.")
+                    }
                 }
             } catch (c: CancellationException) {
                 markDownloadFailed(downloadId)
                 throw c
             } catch (t: Throwable) {
-                t.printStackTrace()
+                Log.e(TAG, "Download failed with exception", t)
                 markDownloadFailed(downloadId)
                 showToast(context, "Download failed: ${t.localizedMessage ?: "Network error"}")
             }
@@ -226,14 +246,25 @@ object DownloadHelper {
         streamUrl: String,
         sourceReferer: String,
         fileName: String,
-        isAudio: Boolean
+        isAudio: Boolean,
+        useAlternateHeaders: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
         val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
         val destination = StorageManager.createMediaDestination(context, fileName, mimeType, isAudio)
             ?: return@withContext false
 
         val reqBuilder = Request.Builder().url(streamUrl)
-        reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+
+        // Critical: Use the right User-Agent depending on stream source
+        if (useAlternateHeaders) {
+            // Alternate attempt: use a browser User-Agent
+            reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        } else if (streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com") || streamUrl.contains("ytimg.com")) {
+            // YouTube/Google Video streams need specific handling
+            reqBuilder.addHeader("User-Agent", "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)")
+        } else {
+            reqBuilder.addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
+        }
 
         // Forward session cookies from WebView (essential for Instagram CDN and authenticated streams)
         val cookieManager = runCatching { android.webkit.CookieManager.getInstance() }.getOrNull()
@@ -245,23 +276,51 @@ object DownloadHelper {
         }
 
         val isInstagram = streamUrl.contains("cdninstagram.com") || streamUrl.contains("fbcdn.net") || sourceReferer.contains("instagram.com")
-        val cleanReferer = if (isInstagram) "https://www.instagram.com/" else sanitizeHeaderValue(sourceReferer)
-        if (cleanReferer != null) {
-            reqBuilder.addHeader("Referer", cleanReferer)
+        val isYouTube = streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")
+
+        if (isInstagram) {
+            reqBuilder.addHeader("Referer", "https://www.instagram.com/")
+        } else if (isYouTube) {
+            reqBuilder.addHeader("Referer", "https://www.youtube.com/")
+            reqBuilder.addHeader("Origin", "https://www.youtube.com")
+        } else {
+            val cleanReferer = sanitizeHeaderValue(sourceReferer)
+            if (cleanReferer != null) {
+                reqBuilder.addHeader("Referer", cleanReferer)
+            }
         }
+
         reqBuilder.addHeader("Accept", "*/*")
-        reqBuilder.addHeader("Accept-Encoding", "identity")
+        reqBuilder.addHeader("Accept-Language", "en-US,en;q=0.9")
+        // Request identity encoding (no compression) so we get raw bytes for progress tracking
+        reqBuilder.addHeader("Accept-Encoding", "identity;q=1, *;q=0")
+        // Connection keep-alive for better streaming performance
+        reqBuilder.addHeader("Connection", "keep-alive")
+
+        // CRITICAL: YouTube/Google Video CDN requires Range header or it throttles to ~50KB/s
+        if (isYouTube) {
+            reqBuilder.addHeader("Range", "bytes=0-")
+        }
+
         val request = reqBuilder.build()
 
         try {
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
+            // 200 = full content, 206 = partial content (expected when Range header is used)
+            if (!response.isSuccessful && response.code != 206) {
+                Log.w(TAG, "Download HTTP ${response.code} for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
+
+                // 403 usually means the URL has expired or needs different auth
+                if (response.code == 403) {
+                    showToast(context, "Stream URL expired (403). Please re-fetch the video link.")
+                }
                 return@withContext false
             }
 
             val contentType = response.header("Content-Type")?.lowercase().orEmpty()
             if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+                Log.w(TAG, "Got HTML/text content instead of media for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
                 showToast(context, "Link returned a web page instead of media stream.")
                 return@withContext false
@@ -272,6 +331,7 @@ object DownloadHelper {
                 return@withContext false
             }
             val contentLength = body.contentLength()
+            Log.d(TAG, "Download started: $fileName, content-length: $contentLength")
 
             val outputStream = StorageManager.openOutputStream(context, destination) ?: run {
                 StorageManager.discardMediaDestination(context, destination)
@@ -279,7 +339,7 @@ object DownloadHelper {
             }
             val inputStream = body.byteStream()
 
-            val buffer = ByteArray(16384)
+            val buffer = ByteArray(32768) // 32KB buffer for better throughput
             var bytesRead: Int
             var totalRead = 0L
             var lastProgress = 0
@@ -292,9 +352,16 @@ object DownloadHelper {
 
                         if (contentLength > 0) {
                             val currentProgress = ((totalRead * 100) / contentLength).toInt().coerceIn(0, 99)
-                            if (currentProgress > lastProgress + 1) {
+                            if (currentProgress > lastProgress) {
                                 lastProgress = currentProgress
                                 updateProgress(downloadId, currentProgress, totalRead, contentLength)
+                            }
+                        } else {
+                            // Unknown content length - update progress by bytes downloaded
+                            val mbDownloaded = totalRead / (1024 * 1024)
+                            if (mbDownloaded > lastProgress) {
+                                lastProgress = mbDownloaded.toInt()
+                                updateProgress(downloadId, -1, totalRead, 0L) // -1 = indeterminate
                             }
                         }
                     }
@@ -302,15 +369,20 @@ object DownloadHelper {
                 }
             }
 
-            // Minimum valid media verification (> 30 KB)
-            if (totalRead < 30 * 1024) {
+            Log.d(TAG, "Download finished: $fileName, total bytes: $totalRead")
+
+            // Minimum valid media verification (> 10 KB for audio, > 30 KB for video)
+            val minSize = if (isAudio) 10 * 1024L else 30 * 1024L
+            if (totalRead < minSize) {
+                Log.w(TAG, "Download too small: $totalRead bytes (min: $minSize)")
                 StorageManager.discardMediaDestination(context, destination)
-                showToast(context, "Download failed: Incomplete stream data received.")
+                showToast(context, "Download failed: Incomplete stream data received (${totalRead / 1024} KB).")
                 return@withContext false
             }
 
             val committed = StorageManager.commitMediaDestination(context, destination)
             if (!committed) {
+                Log.e(TAG, "Failed to commit media destination for $fileName")
                 StorageManager.discardMediaDestination(context, destination)
                 return@withContext false
             }
@@ -329,12 +401,12 @@ object DownloadHelper {
             }
             persistDownloads()
 
-            showToast(context, "Saved successfully: $fileName")
+            showToast(context, "✅ Saved successfully: $fileName")
             true
         } catch (e: Exception) {
             StorageManager.discardMediaDestination(context, destination)
             if (e is CancellationException) throw e
-            e.printStackTrace()
+            Log.e(TAG, "Download stream exception for $fileName", e)
             false
         }
     }
@@ -350,7 +422,7 @@ object DownloadHelper {
         _downloadList.value = _downloadList.value.map {
             if (it.id == downloadId) {
                 it.copy(
-                    progress = progress,
+                    progress = if (progress >= 0) progress else it.progress,
                     downloadedBytes = downloaded,
                     totalBytes = total,
                     status = DownloadStatus.DOWNLOADING

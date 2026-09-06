@@ -293,10 +293,32 @@ private fun DownloadCard(
 
             if (item.status == DownloadStatus.DOWNLOADING) {
                 Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                    color = SnaptubeYellow,
-                    trackColor = SnaptubeBlack
+                if (item.progress > 0) {
+                    LinearProgressIndicator(
+                        progress = { item.progress / 100f },
+                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                        color = SnaptubeYellow,
+                        trackColor = SnaptubeBlack
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${item.progress}%${if (item.totalBytes > 0) " • ${item.downloadedBytes / (1024 * 1024)}/${item.totalBytes / (1024 * 1024)} MB" else ""}",
+                        color = SnaptubeTextSecondary,
+                        fontSize = 11.sp
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                        color = SnaptubeYellow,
+                        trackColor = SnaptubeBlack
+                    )
+                }
+            } else if (item.status == DownloadStatus.FAILED) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "❌ Download failed - tap to retry",
+                    color = Color(0xFFFF5252),
+                    fontSize = 11.sp
                 )
             }
         }

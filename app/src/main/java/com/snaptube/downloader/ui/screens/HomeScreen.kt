@@ -88,14 +88,17 @@ fun HomeScreen(
                     }
                     is com.snaptube.downloader.core.model.ResolveResult.Failure -> {
                         Toast.makeText(context, result.userMessage, Toast.LENGTH_LONG).show()
-                        if (result.errorType == com.snaptube.downloader.core.model.ResolveErrorType.RESOLVER_UNAVAILABLE) {
+                        // Open in browser for both RESOLVER_UNAVAILABLE and MEDIA_UNAVAILABLE
+                        if (result.errorType == com.snaptube.downloader.core.model.ResolveErrorType.RESOLVER_UNAVAILABLE ||
+                            result.errorType == com.snaptube.downloader.core.model.ResolveErrorType.MEDIA_UNAVAILABLE) {
                             onOpenBrowser(extractedUrl)
                         }
                     }
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
-                Toast.makeText(context, "Extraction error: ${t.localizedMessage}", Toast.LENGTH_SHORT).show()
+                val msg = t.localizedMessage ?: t.message ?: "Unknown error"
+                Toast.makeText(context, "Extraction error: $msg", Toast.LENGTH_LONG).show()
             } finally {
                 isLoading = false
             }
